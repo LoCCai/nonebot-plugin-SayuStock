@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+from pathlib import Path
 from dataclasses import dataclass
 
 import pytest
@@ -195,3 +197,117 @@ def test_plugin_owned_chat_and_config_routes_are_gone(client):
     assert client.post(f"{ROUTER_PREFIX}/api/chat", headers=headers(), json={"message": "大盘"}).status_code == 404
     assert client.get(f"{ROUTER_PREFIX}/api/config", headers=headers()).status_code == 404
     assert client.post(f"{ROUTER_PREFIX}/api/config", headers=headers(), json={}).status_code == 404
+
+
+WEB_ROOT = Path(__file__).resolve().parent.parent / "nonebot_plugin_sayustock" / "web"
+
+
+def test_stock_page_covers_every_command_intent_and_period(client):
+    page = client.get(f"{ROUTER_PREFIX}/", headers=headers())
+    assert page.status_code == 200
+    text = page.text
+    intents = {
+        "help",
+        "overview",
+        "stock",
+        "compare",
+        "sector",
+        "technical",
+        "screen",
+        "news",
+        "financial",
+        "valuation",
+        "rank",
+        "add",
+        "remove",
+        "mine",
+        "clear",
+        "report",
+    }
+    rendered = set(re.findall(r'data-command-intent="([a-z]+)"', text))
+    assert rendered == intents
+    for period in ("5k", "15k", "30k", "60k", "日k", "周k", "月k", "季k", "半年k", "年k"):
+        assert f'value="{period}"' in text
+    for day in ("1", "2", "3", "4", "5"):
+        assert f'<option value="{day}">' in text
+    assert 'id="preview-dialog"' in text
+    assert 'data-chart-preview="overview:html"' in text
+    assert 'data-chart-preview="overview:png"' in text
+    assert 'target="_blank"' not in text
+    assert "window.open" not in text
+
+
+def test_theme_is_loaded_synchronously_and_uses_host_tokens(client):
+    page = client.get(f"{ROUTER_PREFIX}/", headers=headers())
+    text = page.text
+    theme = '<script src="static/qweb-theme.js"></script>'
+    assert theme in text
+    assert text.index(theme) < text.index("static/style.css")
+    assert '<script src="static/qweb-theme.js" async' not in text
+    assert '<script src="static/qweb-theme.js" defer' not in text
+
+    css = (WEB_ROOT / "static" / "style.css").read_text(encoding="utf-8")
+    for token in (
+        "--ink",
+        "--muted",
+        "--surface",
+        "--surface-soft",
+        "--brand",
+        "--on-brand",
+        "--line",
+        "--canvas",
+        "--good",
+        "--danger",
+    ):
+        assert f"var({token}" in css
+    assert "var(--app-bg" in css
+    assert "var(--coral" in css
+    assert "var(--green" in css
+    assert "#080d18" not in css
+    assert "#0a1020" not in css
+
+
+def test_stock_js_has_command_parity_and_never_coerces_missing_numbers(client):
+    script = client.get(f"{ROUTER_PREFIX}/static/app.js", headers=headers())
+    assert script.status_code == 200
+    assert "application/javascript" in script.headers["content-type"]
+    source = script.text
+    for command in (
+        "大盘概览",
+        "行业板块",
+        "概念板块",
+        "自动选股",
+        "资金排行",
+        "股票资讯",
+        "个股",
+        "对比个股",
+        "技术分析",
+        "财务",
+        "估值",
+        "添加自选",
+        "删除自选",
+        "我的自选",
+        "清空自选",
+        "股票报告",
+    ):
+        assert command in source
+    assert "/command" in source
+    assert "/qweb/api/v1/auth/session" in source
+    assert "X-CSRF-Token" in source
+    assert "Number.isFinite" in source
+    assert "window.open" not in source
+    assert 'target = "_blank"' not in source
+    assert "?? 0" not in source
+    assert "|| 0" not in source
+    assert "page_url" not in source
+
+
+def test_qweb_theme_bridge_assets_are_served(client):
+    theme = client.get(f"{ROUTER_PREFIX}/static/qweb-theme.js", headers=headers())
+    assert theme.status_code == 200
+    assert "javascript" in theme.headers["content-type"]
+    source = theme.text
+    for name in ("night", "light", "sakura", "aqua"):
+        assert name in source
+    assert "--app-bg" in source
+    assert "--ink" in source

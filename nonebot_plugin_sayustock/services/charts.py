@@ -100,32 +100,32 @@ def chart_from_page(page: Any, *, context: Mapping[str, Any] | None = None) -> s
     return apply_theme(page_html(page, stock_card=True), resolved, recolor=True)
 
 
-async def build_kline_html(service: MarketService, query: str, period: str = "日k") -> tuple[str, int, str]:
+async def build_kline_html(service: MarketService, query: str, period: str = "日k", *, context: Mapping[str, Any] | None = None) -> tuple[str, int, str]:
     from .market import normalize_period
 
     result = await service.market.kline(query, normalize_period(period))
     if not isinstance(result, KlineSeries):
         raise MarketServiceError(getattr(result, "message", "K 线获取失败"))
     page = prepare_kline(result)
-    html = chart_from_page(page)
+    html = chart_from_page(page, context=context)
     if html is None:
         raise MarketServiceError(str(page))
     title = f"{result.symbol.display_name} · {period}"
     return html, page.width, title
 
 
-async def build_intraday_html(service: MarketService, query: str, ndays: int = 1) -> tuple[str, int, str]:
+async def build_intraday_html(service: MarketService, query: str, ndays: int = 1, *, context: Mapping[str, Any] | None = None) -> tuple[str, int, str]:
     result = await service.market.intraday(query, ndays=ndays)
     if not isinstance(result, IntradaySeries):
         raise MarketServiceError(getattr(result, "message", "分时获取失败"))
     page = prepare_single_intraday(result)
-    html = chart_from_page(page)
+    html = chart_from_page(page, context=context)
     if html is None:
         raise MarketServiceError(str(page))
     return html, page.width, f"{result.symbol.display_name} · 分时"
 
 
-async def build_multi_intraday_html(service: MarketService, queries: list[str], ndays: int = 1) -> tuple[str, int, str]:
+async def build_multi_intraday_html(service: MarketService, queries: list[str], ndays: int = 1, *, context: Mapping[str, Any] | None = None) -> tuple[str, int, str]:
     results = []
     for query in queries:
         result = await service.market.intraday(query, ndays=ndays)
@@ -133,13 +133,13 @@ async def build_multi_intraday_html(service: MarketService, queries: list[str], 
             raise MarketServiceError(f"{query}: {getattr(result, 'message', '分时获取失败')}")
         results.append(result)
     page = prepare_multi_intraday(results)
-    html = chart_from_page(page)
+    html = chart_from_page(page, context=context)
     if html is None:
         raise MarketServiceError(str(page))
     return html, page.width, "多股分时对比"
 
 
-async def build_compare_html(service: MarketService, queries: list[str], period: str = "日k") -> tuple[str, int, str]:
+async def build_compare_html(service: MarketService, queries: list[str], period: str = "日k", *, context: Mapping[str, Any] | None = None) -> tuple[str, int, str]:
     from .market import normalize_period
 
     resolved = normalize_period(period)
@@ -149,12 +149,12 @@ async def build_compare_html(service: MarketService, queries: list[str], period:
         if not isinstance(result, KlineSeries):
             raise MarketServiceError(f"{query}: {getattr(result, 'message', 'K 线获取失败')}")
         results.append(result)
-    return compare_series_html(results)
+    return compare_series_html(results, context=context)
 
 
-def compare_series_html(series: list[KlineSeries]) -> tuple[str, int, str]:
+def compare_series_html(series: list[KlineSeries], *, context: Mapping[str, Any] | None = None) -> tuple[str, int, str]:
     page = prepare_compare(series)
-    html = chart_from_page(page)
+    html = chart_from_page(page, context=context)
     if html is None:
         raise MarketServiceError(str(page))
     return html, page.width, "个股走势对比"

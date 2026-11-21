@@ -8,6 +8,7 @@ only to their owner.
 
 from __future__ import annotations
 
+import re
 import time
 from typing import Any
 
@@ -31,6 +32,7 @@ from ..commands import execute
 from ..platform import UnifiedEvent
 from ..artifacts import Artifact, get_artifact, list_artifacts
 from ..ai.contracts import ToolContext
+from ..services.theme import ThemeContext, resolve_theme
 from ..services.charts import (
     ChartRenderError,
     rasterize,
@@ -242,25 +244,34 @@ def _build_router(host: HostDependencies, prefix: str = ROUTER_PREFIX) -> APIRou
         q: str = Query("上证指数", max_length=120),
         period: str = Query("日k", max_length=10),
         ndays: int = Query(1, ge=1, le=5),
+        colors: str = Query("", max_length=55),
+        mode: str = Query("dark", pattern="^(dark|light)$"),
         _account: WebAccount = Depends(member),
     ) -> Any:
         runtime = get_runtime()
+        context = None
+        if colors:
+            if not re.fullmatch(r"[a-fA-F0-9]{6}(?:,[a-fA-F0-9]{6}){7}", colors):
+                raise HTTPException(status_code=422, detail="图表配色格式错误")
+            keys = ("background", "surface", "text", "muted", "accent", "secondary", "pink", "border")
+            palette = {key: f"#{value}" for key, value in zip(keys, colors.split(","), strict=True)}
+            context = ThemeContext(resolve_theme(), palette=palette, post_mode=mode, mode=mode)
         try:
             kind = type.lower()
             if kind == "overview":
                 data = await runtime.market.overview()
-                html, width, title = overview_html(data), 1280, "A股大盘概览"
+                html, width, title = overview_html(data, context=context), 1280, "A股大盘概览"
             elif kind == "intraday":
                 queries = q.replace("，", " ").split()
                 if len(queries) > 1:
-                    html, width, title = await build_multi_intraday_html(runtime.market, queries, ndays)
+                    html, width, title = await build_multi_intraday_html(runtime.market, queries, ndays, context=context)
                 else:
-                    html, width, title = await build_intraday_html(runtime.market, q, ndays)
+                    html, width, title = await build_intraday_html(runtime.market, q, ndays, context=context)
             elif kind == "compare":
                 queries = q.replace("，", " ").split()
-                html, width, title = await build_compare_html(runtime.market, queries, period)
+                html, width, title = await build_compare_html(runtime.market, queries, period, context=context)
             else:
-                html, width, title = await build_kline_html(runtime.market, q, period)
+                html, width, title = await build_kline_html(runtime.market, q, period, context=context)
         except Exception as error:
             raise HTTPException(status_code=502, detail=str(error)) from error
         headers = {

@@ -3,134 +3,553 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="dark">
-  <title>SayuStock · QWeb 股票研究页</title>
+  <meta name="color-scheme" content="light dark">
+  <title>SayuStock · QWeb 股票研究台</title>
+  <script src="static/qweb-theme.js"></script>
   <link rel="stylesheet" href="static/style.css">
 </head>
 <body>
-  <div class="shell">
-    <aside class="sidebar">
+  <a class="skip-link" href="#main">跳到主内容</a>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="SayuStock 导航">
       <div class="brand">
-        <div class="logo">早</div>
-        <div>
+        <div class="logo" aria-hidden="true">早</div>
+        <div class="brand-copy">
           <h1>SayuStock</h1>
-          <p>NoneBot2 · 股票研究台</p>
+          <p>QWeb · 股票研究台</p>
         </div>
       </div>
-      <nav class="nav">
-        <button class="nav-item active" data-view="market"><span>◈</span>市场总览</button>
-        <button class="nav-item" data-view="stock"><span>⌁</span>个股行情</button>
-        <a class="nav-item" href="/qweb/chat" target="_top">七七 AI</a>
-        <button class="nav-item" data-view="artifacts"><span>▤</span>图表与报告</button>
+
+      <nav class="nav" aria-label="主导航">
+        <button class="nav-item is-active" type="button" data-view="market">
+          <span class="nav-icon" aria-hidden="true">◈</span>
+          <span>市场总览</span>
+          <small>大盘 / 板块</small>
+        </button>
+        <button class="nav-item" type="button" data-view="discover">
+          <span class="nav-icon" aria-hidden="true">⌕</span>
+          <span>选股与资讯</span>
+          <small>选股 / 榜单 / 快讯</small>
+        </button>
+        <button class="nav-item" type="button" data-view="research">
+          <span class="nav-icon" aria-hidden="true">⌁</span>
+          <span>个股研究</span>
+          <small>行情 / 财务 / 报告</small>
+        </button>
+        <button class="nav-item" type="button" data-view="watchlist">
+          <span class="nav-icon" aria-hidden="true">★</span>
+          <span>我的自选</span>
+          <small>增删查清空</small>
+        </button>
+        <button class="nav-item" type="button" data-view="artifacts">
+          <span class="nav-icon" aria-hidden="true">▤</span>
+          <span>图表与报告</span>
+          <small>HTML / PNG 制品</small>
+        </button>
+        <button class="nav-item" type="button" data-view="help">
+          <span class="nav-icon" aria-hidden="true">?</span>
+          <span>命令与帮助</span>
+          <small>16 类指令</small>
+        </button>
       </nav>
-      <div class="side-card">
-        <div class="dot" id="health-dot"></div>
+
+      <div class="side-status" aria-live="polite">
+        <span class="dot" id="health-dot" aria-hidden="true"></span>
         <div>
           <b id="health-text">连接中…</b>
-          <small id="health-sub">/qweb/sayustock</small>
+          <small id="health-sub">等待 QWeb 宿主</small>
         </div>
       </div>
-      <div class="side-note">数据仅供研究，不构成投资建议。</div>
+      <a class="side-chat" href="/qweb/chat" target="_top">打开七七 AI 对话</a>
+      <p class="side-note">行情仅供研究，不构成投资建议。写操作使用宿主登录会话与 CSRF 令牌。</p>
     </aside>
 
-    <main class="main">
+    <main class="main" id="main">
       <header class="topbar">
-        <div>
+        <div class="topbar-copy">
+
           <h2 id="view-title">市场总览</h2>
-          <p id="view-sub">指数、市场宽度与板块强弱</p>
+          <p id="view-sub">指数、涨跌分布、成交额与板块强弱</p>
         </div>
         <div class="top-actions">
-          <span class="pill" id="host-pill">QWeb 宿主已连接</span>
-          <button class="ghost" id="refresh-btn">刷新</button>
+          <span class="pill" id="host-pill">QWeb 宿主</span>
+          <button class="ghost" id="refresh-btn" type="button">刷新当前页</button>
         </div>
       </header>
 
-      <section class="view active" id="view-market">
-        <div class="hero panel">
+      <section class="view is-active" id="view-market" aria-labelledby="view-title">
+        <div class="panel hero">
           <div class="hero-head">
             <div>
-              <span class="eyebrow">A-SHARE OVERVIEW</span>
-              <h3>今天的市场，一屏看清</h3>
+
+              <h3>市场概况</h3>
               <p id="overview-time">正在获取行情…</p>
             </div>
-            <div class="hero-stats">
+            <div class="hero-stats" aria-label="市场宽度摘要">
               <div><b id="stat-up">—</b><span>上涨</span></div>
               <div><b id="stat-down">—</b><span>下跌</span></div>
               <div><b id="stat-turnover">—</b><span>成交额</span></div>
             </div>
           </div>
-          <div class="index-grid" id="index-grid"></div>
+          <div class="index-grid" id="index-grid" aria-live="polite"></div>
+          <div class="hero-foot">
+            <div class="hero-actions">
+              <button class="ghost" id="overview-command" type="button" data-command-intent="overview">生成大盘报告</button>
+              <button class="link-btn" id="open-overview-html" type="button" data-chart-preview="overview:html">HTML 预览</button>
+              <button class="link-btn" id="open-overview-png" type="button" data-chart-preview="overview:png">PNG 预览</button>
+            </div>
+            <span class="muted" id="overview-provider">数据源 —</span>
+          </div>
         </div>
+
         <div class="grid-2">
-          <div class="panel">
-            <div class="panel-head"><h3>市场宽度</h3><span id="breadth-note">涨跌分布</span></div>
-            <div class="breadth" id="breadth-bar"></div>
+          <section class="panel">
+            <div class="panel-head">
+              <h3>市场宽度</h3>
+              <span id="breadth-note">涨跌分布</span>
+            </div>
+            <div class="breadth" id="breadth-bar" aria-hidden="true"></div>
             <div class="legend" id="breadth-legend"></div>
             <div class="mini-stats">
+              <div><b id="stat-flat">—</b><span>平盘</span></div>
               <div><b id="stat-limit-up">—</b><span>涨停</span></div>
               <div><b id="stat-limit-down">—</b><span>跌停</span></div>
               <div><b id="stat-north">—</b><span>北向净流入</span></div>
             </div>
-          </div>
-          <div class="panel">
-            <div class="panel-head"><h3>领涨行业</h3><span>点击图表查看大盘云图</span></div>
-            <table class="data-table" id="industry-table"><tbody></tbody></table>
-            <button class="link-btn" id="open-overview-chart">打开大盘概览图 →</button>
-          </div>
-        </div>
-      </section>
+            <div class="warn-list" id="overview-warnings" hidden></div>
+          </section>
 
-      <section class="view" id="view-stock">
-        <div class="panel search-panel">
-          <div class="search-row">
-            <input id="stock-query" placeholder="输入代码或名称，如 600519 / 贵州茅台 / 证券ETF" autocomplete="off">
-            <select id="stock-period">
-              <option value="分时">当日分时</option>
-              <option value="五日">五日分时</option>
-              <option value="日k" selected>日 K</option>
-              <option value="周k">周 K</option>
-              <option value="月k">月 K</option>
-              <option value="60k">60 分钟</option>
-            </select>
-            <button class="primary" id="stock-search">查询</button>
-          </div>
-          <div class="quick-tags">
-            <button data-q="上证指数">上证指数</button>
-            <button data-q="贵州茅台">贵州茅台</button>
-            <button data-q="证券ETF">证券ETF</button>
-            <button data-q="沪深300">沪深300</button>
-            <button data-q="BTC">BTC</button>
-          </div>
-        </div>
-        <div class="grid-2 stock-grid">
-          <div class="panel quote-panel">
-            <div class="panel-head"><h3 id="quote-name">行情快照</h3><span id="quote-source"></span></div>
-            <div class="quote-price"><b id="quote-price">—</b><span id="quote-change">—</span></div>
-            <table class="kv-table" id="quote-table"></table>
-            <div class="quote-actions">
-              <button class="ghost" id="add-watch">加入自选</button>
-              <button class="ghost" id="technical-btn">技术分析</button>
+          <section class="panel">
+            <div class="panel-head">
+              <h3>板块强弱</h3>
+              <span>行业 / 概念涨幅榜</span>
             </div>
-            <pre class="tech-output" id="tech-output"></pre>
+            <div class="table-wrap">
+              <table class="data-table" id="industry-table">
+                <thead><tr><th>行业</th><th class="num">涨跌</th><th>领涨</th><th class="num">领涨涨幅</th></tr></thead>
+                <tbody></tbody>
+              </table>
+            </div>
+            <div class="table-wrap">
+              <table class="data-table" id="concept-table">
+                <thead><tr><th>概念</th><th class="num">涨跌</th><th>领涨</th><th class="num">领涨涨幅</th></tr></thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+
+        <section class="panel task-panel">
+          <div class="panel-head">
+            <div>
+              <h3>板块排行</h3>
+
+            </div>
           </div>
-          <div class="panel chart-panel">
-            <div class="panel-head"><h3 id="chart-title">图表</h3><a id="chart-open" target="_blank" rel="noopener">新窗口打开</a></div>
-            <iframe id="chart-frame" title="SayuStock chart" sandbox="allow-scripts"></iframe>
+          <form class="inline-form" id="sector-form" data-command-intent="sector">
+            <label class="field field-inline">
+              <span>板块类型</span>
+              <select id="sector-kind">
+                <option value="industry">行业板块</option>
+                <option value="concept">概念板块</option>
+              </select>
+            </label>
+            <button class="primary" type="submit">查询板块排行</button>
+          </form>
+          <div class="command-output" id="market-output" hidden></div>
+        </section>
+      </section>
+
+      <section class="view" id="view-discover" aria-labelledby="view-title">
+        <div class="subnav" role="tablist" aria-label="选股与资讯任务">
+          <button class="subnav-item is-active" type="button" role="tab" aria-selected="true" data-discover="screen">条件选股</button>
+          <button class="subnav-item" type="button" role="tab" aria-selected="false" data-discover="rank">资金与业绩榜单</button>
+          <button class="subnav-item" type="button" role="tab" aria-selected="false" data-discover="news">财经快讯</button>
+        </div>
+
+        <section class="discover-pane is-active" id="discover-screen" role="tabpanel">
+          <div class="panel">
+            <div class="panel-head">
+              <div>
+                <h3>自动选股</h3>
+
+              </div>
+
+            </div>
+            <form id="screen-form" data-command-intent="screen">
+              <div class="form-grid">
+                <label class="field">
+                  <span>最小市值（亿）</span>
+                  <input id="screen-cap-min" type="number" min="0" step="1" placeholder="例如 50" inputmode="decimal">
+                </label>
+                <label class="field">
+                  <span>最大市值（亿）</span>
+                  <input id="screen-cap-max" type="number" min="0" step="1" placeholder="例如 200" inputmode="decimal">
+                </label>
+                <label class="field">
+                  <span>PE 上限</span>
+                  <input id="screen-pe-max" type="number" min="0" step="0.1" placeholder="例如 30" inputmode="decimal">
+                </label>
+                <label class="field">
+                  <span>涨幅下限（%）</span>
+                  <input id="screen-change-min" type="number" step="0.1" placeholder="例如 2" inputmode="decimal">
+                </label>
+                <label class="field">
+                  <span>涨幅上限（%）</span>
+                  <input id="screen-change-max" type="number" step="0.1" placeholder="例如 9" inputmode="decimal">
+                </label>
+                <label class="field">
+                  <span>行业关键字</span>
+                  <input id="screen-industry" type="text" maxlength="20" placeholder="例如 半导体" autocomplete="off">
+                </label>
+              </div>
+              <div class="form-actions">
+                <button class="primary" type="submit">运行条件选股</button>
+                <button class="ghost" type="button" data-screen-preset="mid">中小市值成长</button>
+                <button class="ghost" type="button" data-screen-preset="lowpe">低估值</button>
+                <button class="ghost" type="reset">清空条件</button>
+              </div>
+            </form>
+            <div class="command-output" id="screen-output" hidden></div>
           </div>
+        </section>
+
+        <section class="discover-pane" id="discover-rank" role="tabpanel">
+          <div class="panel">
+            <div class="panel-head">
+              <div>
+                <h3>资金与业绩榜单</h3>
+
+              </div>
+
+            </div>
+            <form class="inline-form" id="rank-form" data-command-intent="rank">
+              <label class="field field-inline">
+                <span>排行口径</span>
+                <select id="rank-by">
+                  <option value="main_inflow">主力净流入</option>
+                  <option value="main_outflow">主力净流出</option>
+                  <option value="turnover">换手率</option>
+                  <option value="roe">ROE</option>
+                  <option value="amount">成交额</option>
+                  <option value="volume">成交量</option>
+                  <option value="profit_yoy">净利同比</option>
+                </select>
+              </label>
+              <button class="primary" type="submit">查询榜单</button>
+            </form>
+            <div class="command-output" id="rank-output" hidden></div>
+          </div>
+        </section>
+
+        <section class="discover-pane" id="discover-news" role="tabpanel">
+          <div class="panel">
+            <div class="panel-head">
+              <div>
+                <h3>财经快讯</h3>
+
+              </div>
+
+            </div>
+            <div class="form-actions">
+              <button class="primary" id="news-refresh" type="button" data-command-intent="news">刷新快讯</button>
+              <span class="muted">默认取最新 10 条</span>
+            </div>
+            <div class="command-output" id="news-output" hidden></div>
+          </div>
+        </section>
+      </section>
+
+      <section class="view" id="view-research" aria-labelledby="view-title">
+        <section class="panel stock-search-panel">
+          <div class="panel-head">
+            <div>
+              <h3>个股行情与图表</h3>
+
+            </div>
+
+          </div>
+          <form class="stock-search" id="stock-form" data-command-intent="stock">
+            <label class="field field-grow">
+              <span>代码 / 名称</span>
+              <input id="stock-query" type="text" maxlength="80" placeholder="例如 600519 / 贵州茅台 / 证券ETF" autocomplete="off">
+            </label>
+            <label class="field">
+              <span>图表类型</span>
+              <select id="stock-mode">
+                <option value="intraday">分时</option>
+                <option value="kline" selected>K 线</option>
+              </select>
+            </label>
+            <label class="field" id="stock-days-field">
+              <span>分时天数</span>
+              <select id="stock-days">
+                <option value="1">当日分时</option>
+                <option value="2">2 日分时</option>
+                <option value="3">3 日分时</option>
+                <option value="4">4 日分时</option>
+                <option value="5">五日分时</option>
+              </select>
+            </label>
+            <label class="field" id="stock-period-field">
+              <span>K 线周期</span>
+              <select id="stock-period">
+                <option value="5k">5 分钟 K</option>
+                <option value="15k">15 分钟 K</option>
+                <option value="30k">30 分钟 K</option>
+                <option value="60k">60 分钟 K</option>
+                <option value="日k" selected>日 K</option>
+                <option value="周k">周 K</option>
+                <option value="月k">月 K</option>
+                <option value="季k">季 K</option>
+                <option value="半年k">半年 K</option>
+                <option value="年k">年 K</option>
+              </select>
+            </label>
+            <button class="primary" type="submit">查询</button>
+          </form>
+          <div class="quick-tags" aria-label="快捷标的">
+            <button type="button" data-quick-query="上证指数">上证指数</button>
+            <button type="button" data-quick-query="贵州茅台">贵州茅台</button>
+            <button type="button" data-quick-query="证券ETF">证券ETF</button>
+            <button type="button" data-quick-query="沪深300">沪深300</button>
+            <button type="button" data-quick-query="BTC">BTC</button>
+          </div>
+        </section>
+
+        <div class="stock-workspace">
+          <section class="panel quote-panel">
+            <div class="panel-head">
+              <h3 id="quote-name">行情快照</h3>
+              <span id="quote-source">选择标的后显示</span>
+            </div>
+            <div class="quote-price">
+              <b id="quote-price">—</b>
+              <span id="quote-change">—</span>
+            </div>
+            <div class="table-wrap">
+              <table class="kv-table" id="quote-table"><tbody></tbody></table>
+            </div>
+            <div class="form-actions quote-actions">
+              <button class="ghost" id="quote-add-watch" type="button" data-command-intent="add">加入自选</button>
+              <button class="ghost" id="quote-technical" type="button" data-command-intent="technical">技术分析</button>
+              <button class="ghost" id="quote-report" type="button" data-command-intent="report">生成报告</button>
+              <button class="ghost" id="quote-command" type="button" data-command-intent="stock">生成行情卡片</button>
+            </div>
+          </section>
+
+          <section class="panel chart-panel">
+            <div class="panel-head">
+              <div>
+                <h3 id="chart-title">图表</h3>
+                <p class="panel-sub" id="chart-meta">HTML 与 PNG 均在当前页弹窗预览</p>
+              </div>
+              <div class="chart-actions">
+                <button class="link-btn" id="chart-html" type="button">HTML 预览</button>
+                <button class="link-btn" id="chart-png" type="button">PNG 预览</button>
+              </div>
+            </div>
+            <div class="chart-frame-wrap">
+              <iframe id="chart-frame" title="SayuStock 行情图表" sandbox="allow-same-origin" loading="lazy"></iframe>
+              <p class="chart-empty" id="chart-empty">输入标的即可在页内查看分时或 K 线图。</p>
+            </div>
+          </section>
+        </div>
+
+        <div class="command-output" id="stock-output" hidden></div>
+
+        <div class="research-grid">
+          <section class="panel research-card">
+            <div class="panel-head">
+              <div><h3>技术分析</h3></div>
+
+            </div>
+            <form class="inline-form" id="technical-form">
+              <label class="field field-grow"><span>标的</span><input id="technical-query" type="text" maxlength="80" placeholder="例如 600519" autocomplete="off"></label>
+              <label class="field"><span>周期</span><select id="technical-period" data-period-select data-default="日k"><option value="日k">日 K</option></select></label>
+              <button class="primary" type="submit">分析</button>
+            </form>
+            <div class="command-output" id="technical-output" hidden></div>
+          </section>
+
+          <section class="panel research-card">
+            <div class="panel-head">
+              <div><h3>走势对比</h3></div>
+
+            </div>
+            <form class="inline-form" id="compare-form" data-command-intent="compare">
+              <label class="field field-grow"><span>标的</span><input id="compare-query" type="text" maxlength="160" placeholder="贵州茅台 五粮液 沪深300" autocomplete="off"></label>
+              <label class="field"><span>周期</span><select id="compare-period" data-period-select data-default="日k"><option value="日k">日 K</option></select></label>
+              <button class="primary" type="submit">对比</button>
+            </form>
+            <div class="command-output" id="compare-output" hidden></div>
+          </section>
+
+          <section class="panel research-card">
+            <div class="panel-head">
+              <div><h3>财务快照</h3></div>
+
+            </div>
+            <form class="inline-form" id="financial-form" data-command-intent="financial">
+              <label class="field field-grow"><span>标的</span><input id="financial-query" type="text" maxlength="80" placeholder="例如 600519" autocomplete="off"></label>
+              <button class="primary" type="submit">查看财务</button>
+            </form>
+            <div class="command-output" id="financial-output" hidden></div>
+          </section>
+
+          <section class="panel research-card">
+            <div class="panel-head">
+              <div><h3>历史估值</h3></div>
+
+            </div>
+            <form class="inline-form" id="valuation-form" data-command-intent="valuation">
+              <label class="field field-grow"><span>标的</span><input id="valuation-query" type="text" maxlength="80" placeholder="例如 600519" autocomplete="off"></label>
+              <label class="field"><span>口径</span>
+                <select id="valuation-kind">
+                  <option value="pe">PE 市盈率</option>
+                  <option value="pb">PB 市净率</option>
+                  <option value="dy">股息率</option>
+                </select>
+              </label>
+              <button class="primary" type="submit">查看估值</button>
+            </form>
+            <div class="command-output" id="valuation-output" hidden></div>
+          </section>
+
+          <section class="panel research-card research-card-wide">
+            <div class="panel-head">
+              <div><h3>研究报告</h3></div>
+
+            </div>
+            <form class="inline-form" id="report-form">
+              <label class="field field-grow"><span>标的</span><input id="report-query" type="text" maxlength="80" placeholder="留空时使用我的自选第一只" autocomplete="off"></label>
+              <button class="primary" type="submit">生成 HTML 报告</button>
+            </form>
+            <div class="command-output" id="report-output" hidden></div>
+          </section>
         </div>
       </section>
 
+      <section class="view" id="view-watchlist" aria-labelledby="view-title">
+        <div class="grid-2 watch-grid">
+          <section class="panel">
+            <div class="panel-head">
+              <div><h3>我的自选</h3></div>
+              <div class="panel-actions"><button class="link-btn" id="watch-mine" type="button" data-command-intent="mine">查看自选行情</button></div>
+            </div>
+            <div id="watch-list" class="watch-list" aria-live="polite">
+              <p class="hint">正在读取自选…</p>
+            </div>
+          </section>
+          <section class="panel">
+            <div class="panel-head">
+              <div><h3>添加自选</h3></div>
 
-      <section class="view" id="view-artifacts">
-        <div class="panel">
-          <div class="panel-head"><h3>图表与报告</h3><span>最近 50 个制品</span></div>
-          <div id="artifact-grid" class="artifact-grid"></div>
+            </div>
+            <form id="watch-add-form" data-command-intent="add">
+              <label class="field">
+                <span>标的</span>
+                <input id="watch-add-query" type="text" maxlength="160" placeholder="例如 600519 贵州茅台 证券ETF" autocomplete="off">
+              </label>
+              <div class="form-actions">
+                <button class="primary" type="submit">添加</button>
+                <button class="ghost" type="button" id="watch-clear" data-command-intent="clear">清空全部自选</button>
+              </div>
+            </form>
+            <div class="command-output" id="watch-output" hidden></div>
+          </section>
         </div>
       </section>
 
+      <section class="view" id="view-artifacts" aria-labelledby="view-title">
+        <section class="panel">
+          <div class="panel-head">
+            <div><h3>图表与报告</h3></div>
+            <button class="ghost" id="artifacts-refresh" type="button">刷新制品</button>
+          </div>
+          <div class="artifact-grid" id="artifact-grid" aria-live="polite"></div>
+        </section>
+      </section>
+
+      <section class="view" id="view-help" aria-labelledby="view-title">
+        <div class="grid-2">
+          <section class="panel">
+            <div class="panel-head">
+              <div><h3>16 类命令意图</h3></div>
+
+            </div>
+            <div class="table-wrap">
+              <table class="data-table help-table">
+                <thead><tr><th>意图</th><th>命令示例</th><th>操作</th></tr></thead>
+                <tbody>
+                  <tr><td><code>help</code> 帮助</td><td><code>股票帮助</code></td><td><button class="link-btn" type="button" data-command-intent="help" data-run-command="股票帮助" data-output="#help-output">运行</button></td></tr>
+                  <tr><td><code>overview</code> 大盘概览</td><td><code>大盘概览</code></td><td><button class="link-btn" type="button" data-run-command="大盘概览" data-output="#help-output">运行</button></td></tr>
+                  <tr><td><code>stock</code> 个股行情</td><td><code>个股 日k 600519</code></td><td><button class="link-btn" type="button" data-run-command="个股 日k 600519" data-output="#help-output">运行</button></td></tr>
+                  <tr><td><code>compare</code> 对比个股</td><td><code>对比个股 贵州茅台 五粮液 沪深300</code></td><td><button class="link-btn" type="button" data-run-command="对比个股 贵州茅台 五粮液 沪深300" data-output="#help-output">运行</button></td></tr>
+                  <tr><td><code>sector</code> 板块排行</td><td><code>行业板块</code> / <code>概念板块</code></td><td><button class="link-btn" type="button" data-run-command="行业板块" data-output="#help-output">运行</button></td></tr>
+                  <tr><td><code>technical</code> 技术分析</td><td><code>技术分析 周k 600519</code></td><td><button class="link-btn" type="button" data-run-command="技术分析 周k 600519" data-output="#help-output">运行</button></td></tr>
+                  <tr><td><code>screen</code> 自动选股</td><td><code>自动选股 市值50-200 PE&lt;30 涨跌幅&gt;2</code></td><td><button class="link-btn" type="button" data-run-command="自动选股 市值50-200 PE&lt;30 涨跌幅&gt;2" data-output="#help-output">运行</button></td></tr>
+                  <tr><td><code>news</code> 股票资讯</td><td><code>股票资讯</code></td><td><button class="link-btn" type="button" data-run-command="股票资讯" data-output="#help-output">运行</button></td></tr>
+                  <tr><td><code>financial</code> 财务</td><td><code>财务 600519</code></td><td><button class="link-btn" type="button" data-run-command="财务 600519" data-output="#help-output">运行</button></td></tr>
+                  <tr><td><code>valuation</code> 估值</td><td><code>估值 pb 600519</code></td><td><button class="link-btn" type="button" data-run-command="估值 pb 600519" data-output="#help-output">运行</button></td></tr>
+                  <tr><td><code>rank</code> 资金排行</td><td><code>资金排行 main_inflow</code></td><td><button class="link-btn" type="button" data-run-command="资金排行 main_inflow" data-output="#help-output">运行</button></td></tr>
+                  <tr><td><code>add</code> 添加自选</td><td><code>添加自选 600519</code></td><td><button class="link-btn" type="button" data-run-command="添加自选 600519" data-output="#help-output">运行</button></td></tr>
+                  <tr><td><code>remove</code> 删除自选</td><td><code>删除自选 600519</code></td><td><button class="link-btn" type="button" data-command-intent="remove" data-run-command="删除自选 600519" data-output="#help-output">运行</button></td></tr>
+                  <tr><td><code>mine</code> 我的自选</td><td><code>我的自选</code></td><td><button class="link-btn" type="button" data-run-command="我的自选" data-output="#help-output">运行</button></td></tr>
+                  <tr><td><code>clear</code> 清空自选</td><td><code>清空自选</code></td><td><button class="link-btn" type="button" data-run-command="清空自选" data-output="#help-output">运行</button></td></tr>
+                  <tr><td><code>report</code> 股票报告</td><td><code>股票报告 600519</code></td><td><button class="link-btn" type="button" data-run-command="股票报告 600519" data-output="#help-output">运行</button></td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <div><h3>命令控制台</h3></div>
+            </div>
+            <form id="command-form" class="command-form">
+              <label class="field">
+                <span>命令文本</span>
+                <input id="command-input" type="text" maxlength="200" placeholder="例如 个股 15k 600519" autocomplete="off">
+              </label>
+              <button class="primary" type="submit">执行</button>
+            </form>
+            <div class="help-notes">
+              <p><b>写操作</b>：添加、删除、清空自选会向宿主读取 CSRF 令牌，并只使用宿主返回的账户身份。</p>
+              <p><b>预览</b>：命令返回的 HTML / PNG 制品在当前页弹窗内打开，不新开标签页。</p>
+              <p><b>缺失值</b>：接口没有返回的数字显示为「—」，不参与求和或占比计算。</p>
+              <p><b>周期</b>：分时 1–5 日（含五日分时）；K 线 5/15/30/60 分钟与日/周/月/季/半年/年。命令模式使用「个股 五日 代码」。</p>
+            </div>
+            <div class="command-output" id="help-output" hidden></div>
+          </section>
+        </div>
+      </section>
     </main>
   </div>
-  <div id="toast" class="toast"></div>
+
+  <dialog id="watch-confirm" aria-labelledby="watch-confirm-title">
+    <form method="dialog" class="panel">
+      <h3 id="watch-confirm-title">清空全部自选股？</h3>
+      <div class="form-actions"><button class="ghost" value="cancel" autofocus>保留</button><button class="primary" value="clear">清空</button></div>
+    </form>
+  </dialog>
+  <dialog class="preview-dialog" id="preview-dialog" aria-labelledby="preview-title">
+    <div class="preview-shell">
+      <header class="preview-head">
+        <div>
+          <h3 id="preview-title">预览</h3>
+          <p id="preview-sub"></p>
+        </div>
+        <div class="preview-actions">
+          <button class="ghost" id="preview-reload" type="button">刷新</button>
+          <button class="ghost" id="preview-close" type="button">关闭</button>
+        </div>
+      </header>
+      <div class="preview-body" id="preview-body"></div>
+    </div>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <script src="static/app.js"></script>
 </body>
 </html>

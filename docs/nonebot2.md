@@ -87,6 +87,10 @@ HTML 制品带 `Content-Security-Policy: sandbox`，可由宿主页面 iframe �
 
 ## 5. QWeb API
 
+股票研究台可从市场、选股与资讯、个股研究、自选四处直接操作。图表与报告在页内预览。
+实时 HTML 行情图跟随当前 QWeb 的配色；保存的报告和图片沿用生成时的七七报告主题。
+
+
 | 方法 | 路径 | 鉴权 | 说明 |
 | --- | --- | --- | --- |
 | GET | `/qweb/sayustock/` | 成员 | 页面 |
