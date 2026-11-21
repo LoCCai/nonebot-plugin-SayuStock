@@ -270,10 +270,11 @@
 
           </div>
           <form class="stock-search" id="stock-form" data-command-intent="stock">
-            <label class="field field-grow">
+            <label class="field">
               <span>代码 / 名称</span>
               <input id="stock-query" type="text" maxlength="80" placeholder="例如 600519 / 贵州茅台 / 证券ETF" autocomplete="off">
             </label>
+            <button class="primary" type="submit">查询</button>
             <label class="field">
               <span>图表类型</span>
               <select id="stock-mode">
@@ -306,7 +307,7 @@
                 <option value="年k">年 K</option>
               </select>
             </label>
-            <button class="primary" type="submit">查询</button>
+
           </form>
           <div class="quick-tags" aria-label="快捷标的">
             <button type="button" data-quick-query="上证指数">上证指数</button>
