@@ -37,7 +37,7 @@ driver = "~fastapi"
 - 宿主 MoEllmChats 可使用 ToolSpec / `tool_manager` 接口拿到 `sayustock_*` 工具；
   没有这些接口时，宿主仍可通过 NoneBot 插件元数据与真实群命令调用。
 - 工具身份只取宿主传来的真实事件（`event.user_id` / `event.group_id`），不会读取
-  模型参数里的 `user_id`。写工具（自选增删）必须等宿主完成确认；上游
+  模型参数里的 `user_id`。写工具（自选增删、订阅及模拟盘管理）必须等宿主完成确认；上游
   `tool_manager` 只注入只读工具，写操作请让用户直接发命令。
 
 ### 网页
@@ -55,7 +55,7 @@ driver = "~fastapi"
 宿主模块不存在时 `get_router()` 返回 503，启动钩子也不会挂载页面。
 
 网页写请求必须带 `X-CSRF-Token`。对话由宿主 `/qweb/chat` 承担；本插件只暴露
-股票工具和只读数据，不保存任何模型配置。
+股票数据、本人自选与授权群业务，由宿主管理聊天模型。
 
 ### 私有制品
 
@@ -179,3 +179,24 @@ MoEllm ToolSpec 与上游 `tool_manager` 注册。网络型行情测试默认跳
 ```bash
 SAYUSTOCK_DATABASE_URL=postgresql://... pytest tests_nb2/test_storage_postgres.py -q
 ```
+
+
+## 七七分支的专题与部署
+
+群成员可用「股票帮助」，网页在股票页的「研究与模拟盘」选择业务。登录后可通过
+`GET /qweb/sayustock/api/features` 读取与群菜单同源的专题清单。查询包括 ETF 申赎篮子、
+市场云图、持仓与行业集中度、估值对比、IPO、账本、交易记录和宏观事件。
+`POST /qweb/sayustock/api/features/{名称}` 接收 `argument`，群业务可传 `group_id`。
+宿主重新核验群成员身份与指令权限。写操作需要 CSRF 和 `confirmed: true`。
+QWeb 对话和 MoEllmChats 分别将 `sayustock_manage_feature` 交给宿主确认；
+`sayustock_research_feature` 提供查询、结构化数据和属于本人的图表。
+
+七七以 `SAYUSTOCK_STORAGE=postgres` 启用专用 schema。已有 001 的部署，依次执行插件
+`migrations/002_news_subscription.sql` 和 `003_papertrade.sql`，然后加载插件。新闻调度器
+记录群与机器人各自的水位。模拟盘用 PostgreSQL 事务记账。交易日决策及宏观复核由宿主 AI 客户端执行，
+实时推送支持 OneBot v11/v12。QQ 官方适配器按平台能力响应主动查询。
+
+「模型预测」使用独立的 Kronos 金融时序模型。安装包的 `forecast` extra、适合机器的 CPU 或 CUDA
+版本的 PyTorch，并准备配对的权重。CPU 推荐 Kronos-mini 配 Kronos-Tokenizer-2k。
+离线部署可在 `SAYUSTOCK_KRONOS_MODEL`、`SAYUSTOCK_KRONOS_TOKENIZER` 分别指定包含
+`config.json` 与 `model.safetensors` 的目录。输入采用 30 分钟 K 线。预测中的重复请求共用并发限制。

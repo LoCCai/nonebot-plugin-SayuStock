@@ -32,6 +32,7 @@ from .theme import (  # noqa: E402
     theme_palette,
 )
 from .market import MarketService, MarketServiceError  # noqa: E402
+from .overview import breadth_svg, market_mood, sources_text  # noqa: E402
 from ..compat.gsuid_core.utils.html_render import render_html_to_bytes  # noqa: E402
 
 
@@ -183,33 +184,31 @@ def overview_html(data: dict[str, Any], *, width: int = 1280, context: Mapping[s
           <div class="spark">{item.get("spark") or ""}</div>
           <div class="index-meta">{_esc(item.get("code"))} · {_esc(item.get("provider") or "")}</div>
         </article>"""
-        for item in indices[:12]
+        for item in indices
     )
 
-    total = int(breadth.get("up", 0)) + int(breadth.get("down", 0)) + int(breadth.get("flat", 0))
-    up_ratio = (int(breadth.get("up", 0)) / total * 100) if total else 0
-    down_ratio = (int(breadth.get("down", 0)) / total * 100) if total else 0
-    breadth_bar = f"""
-      <div class="breadth-bar" title="上涨 {breadth.get("up", 0)} / 下跌 {breadth.get("down", 0)}">
-        <span class="up-bar" style="width:{up_ratio:.1f}%"></span>
-        <span class="down-bar" style="width:{down_ratio:.1f}%"></span>
-        <span class="flat-bar" style="width:{max(0, 100 - up_ratio - down_ratio):.1f}%"></span>
-      </div>
-      <div class="breadth-legend">
-        <span class="up">上涨 {breadth.get("up", 0)}</span>
-        <span class="flat">平盘 {breadth.get("flat", 0)}</span>
-        <span class="down">下跌 {breadth.get("down", 0)}</span>
-        <span class="limit">涨停 {breadth.get("limit_up", 0)} / 跌停 {breadth.get("limit_down", 0)}</span>
-      </div>"""
+    total = sum(breadth.get(k, 0) for k in ("up", "flat", "down"))
+    up_share = f"{breadth['up'] / total:.1%}" if total else "—"
+    legend = "　".join(f"{label} {breadth[key]}" for label, key in
+                     (("上涨", "up"), ("平盘", "flat"), ("下跌", "down")) if key in breadth)
+    from SayuStock.render.card_widgets import mood_uri
 
-    def sector_rows(rows: list[dict[str, Any]]) -> str:
+    mood_label, number = market_mood(data)
+    mood_image = f'<img class="flow-image" src="{mood_uri(number)}" alt="市场情绪">' if number else ""
+    flow = data.get("main_flow_uri") or ""
+    flow_html = (f'<img class="flow-image" src="{_esc(flow)}" alt="东财主力净流入">'
+                 if flow.startswith("data:image/png;base64,") else "暂缺主力资金图")
+
+    def sector_rows(rows: list[dict[str, Any]], *, falling: bool = False) -> str:
+        member = "fall_name" if falling else "lead_name"
+        change = "fall_change_pct" if falling else "lead_change_pct"
         return "".join(
             f"<tr><td>{_esc(row.get('name'))}</td>"
             f"<td class='num {_tone(row.get('change_pct'))}'>{_pct(row.get('change_pct'))}</td>"
-            f"<td>{_esc(row.get('lead_name') or '')}</td>"
-            f"<td class='num'>{_pct(row.get('lead_change_pct'))}</td></tr>"
-            for row in rows[:10]
-        )
+            f"<td>{_esc(row.get(member) or '—')}</td>"
+            f"<td class='num'>{_pct(row.get(change))}</td></tr>"
+            for row in rows[:20]
+        ) or '<tr><td colspan="4">暂缺板块数据</td></tr>'
 
     turnover_amount = turnover.get("amount")
     turnover_yi = f"{float(turnover_amount) / 1e8:,.0f} 亿" if isinstance(turnover_amount, (int, float)) else "—"
@@ -253,10 +252,9 @@ border-radius:14px;padding:14px 15px;position:relative;overflow:hidden}}
 .panel h2{{font-size:16px;margin:0 0 12px}}.stats{{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}}
 .stat{{background:var(--panel2);border-radius:12px;padding:12px}}.stat b{{display:block;font-size:20px}}
 .stat span{{color:var(--muted);font-size:12px}}
-.breadth-bar{{display:flex;height:16px;border-radius:8px;overflow:hidden;background:{palette.surface_alt};
-margin:12px 0 8px}}
-.breadth-bar span{{display:block;height:100%}}.up-bar{{background:var(--up)}}.down-bar{{background:var(--down)}}
-.flat-bar{{background:var(--flat)}}.breadth-legend{{display:flex;gap:18px;flex-wrap:wrap;font-size:12px}}
+.band-chart{{width:100%;max-height:240px;display:block}}.band-chart text{{text-anchor:middle;fill:var(--text);font-size:14px}}
+.band-up rect{{fill:var(--up)}}.band-down rect{{fill:var(--down)}}.band-flat rect{{fill:var(--flat)}}
+.flow-image{{max-width:100%;height:auto}}.breadth-legend{{color:var(--muted)}}
 .tables{{display:grid;grid-template-columns:repeat(2,1fr);gap:18px}}
 table{{width:100%;border-collapse:collapse;font-size:12px}}th,td{{padding:7px 6px;border-bottom:1px solid var(--line);text-align:left}}
 th{{color:var(--muted);font-weight:500}}.num{{text-align:right;font-variant-numeric:tabular-nums}}
@@ -265,24 +263,25 @@ background:var(--warn-bg);color:var(--warn-text);font-size:12px}}
 @media(max-width:760px){{.tables{{grid-template-columns:1fr}}.stats{{grid-template-columns:1fr}}}}
 </style></head><body><div class="wrap">
 <header class="stock-heading"><div class="stock-heading-copy"><h1>A股大盘概览</h1>
-<div class="sub">数据时间 {_esc(data.get("as_of"))} · 来源 {_esc(data.get("provider") or "多源聚合")}</div>
+<div class="sub">{_esc(data.get("session_label"))} · 生成于 {_esc(data.get("as_of"))}<br>{_esc(sources_text(data))}</div>
 <div class="sub">仅供研究，不构成投资建议</div></div><!--stock-heading-art--></header>
 <section class="grid">{index_cards}</section>
-<div class="panel"><h2>市场宽度</h2>{breadth_bar}</div>
+<div class="panel"><h2>市场宽度</h2>{breadth_svg(breadth)}<div class="breadth-legend">{_esc(legend)}</div></div>
 <div class="panel stats">
-  <div class="stat"><b>{turnover_yi}</b><span>两市成交额</span></div>
+  <div class="stat"><b>{turnover_yi}</b><span>两市成交额　{_esc(data.get("turnover_note"))}</span></div>
   <div class="stat"><b>{north}</b><span>北向资金净流入</span></div>
-  <div class="stat"><b>{up_ratio:.1f}%</b><span>上涨占比</span></div>
+  <div class="stat"><b>{up_share}</b><span>上涨占比</span></div>
 </div>
+<div class="panel"><h2>{_esc(mood_label)}</h2>{mood_image}<div>主力资金 · 东方财富</div>{flow_html}</div>
 <div class="panel tables">
   <div><h2>行业领涨</h2><table><thead><tr><th>板块</th><th class="num">涨跌幅</th><th>领涨</th><th class="num">涨幅</th></tr></thead>
   <tbody>{sector_rows(industry_rise)}</tbody></table></div>
   <div><h2>行业领跌</h2><table><thead><tr><th>板块</th><th class="num">涨跌幅</th><th>领跌</th><th class="num">跌幅</th></tr></thead>
-  <tbody>{sector_rows(industry_fall)}</tbody></table></div>
+  <tbody>{sector_rows(industry_fall, falling=True)}</tbody></table></div>
   <div><h2>概念领涨</h2><table><thead><tr><th>板块</th><th class="num">涨跌幅</th><th>领涨</th><th class="num">涨幅</th></tr></thead>
   <tbody>{sector_rows(concept_rise)}</tbody></table></div>
   <div><h2>概念领跌</h2><table><thead><tr><th>板块</th><th class="num">涨跌幅</th><th>领跌</th><th class="num">跌幅</th></tr></thead>
-  <tbody>{sector_rows(concept_fall)}</tbody></table></div>
+  <tbody>{sector_rows(concept_fall, falling=True)}</tbody></table></div>
 </div>
 {warnings_html}
 <!--stock-report-footer-->

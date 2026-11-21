@@ -460,6 +460,15 @@ html[data-card-theme] .wrap { width:min(100%,var(--stock-width,920px)); }
   padding:0;background:var(--surface-accent,var(--ss-surface-alt));color:var(--ss-text);
   border:1px solid var(--ss-border);border-radius:var(--menu-radius,14px);overflow:hidden;
 }
+html[data-card-theme] body:has(.stock-upstream-content) { max-width:100%;margin-inline:auto; }
+.stock-upstream-content { max-width:100%;min-width:0;overflow-x:auto; }
+.stock-upstream-content .page { box-sizing:border-box;max-width:100%;margin-inline:auto; }
+.stock-upstream-content .ex-table, .stock-upstream-content .matrix { overflow-x:auto; }
+@media(max-width:640px) {
+  .stock-upstream-content .page { padding:12px; }
+  .stock-upstream-content .ex-grid:is(.three,.four,.five,.six) { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .stock-upstream-content .ex-head { flex-wrap:wrap; }
+}
 .stock-heading-copy { flex:1;min-width:0;align-self:center;padding:16px clamp(12px,3vw,30px);overflow-wrap:anywhere; }
 .stock-heading h1 { margin:0;font-size:clamp(22px,3.3vw,38px);line-height:1.25; }
 .stock-heading-copy :is(.sub,.dash-sub,.news-source,.meta,.chart-subtitle,.news-count) {
@@ -672,6 +681,32 @@ def apply_theme(
     result = _svg_semantics(result)
     result = _apply_attrs(result, resolved)
     return apply_frame(_insert_style(result, theme_style(resolved)))
+
+
+def themed_upstream_page(document: str, title: str) -> str:
+    from html import escape
+
+    from .card_frame import ART_SLOT, FOOTER_SLOT
+
+    if 'class="stock-heading"' in document and ART_SLOT not in document:
+        # A page already themed by the chart builder carries its own footer.
+        return document
+    source = re.search(r"(<body\b[^>]*>)(.*?)(</body>)", document, re.I | re.S)
+    if not source:
+        return document
+    content = source[2]
+    heading = re.search(r'<header class="ex-head">(.*?)</header>', content, re.S)
+    if heading:
+        copy = heading[1]
+        content = content[:heading.start()] + content[heading.end():]
+    else:
+        copy = f"<h1>{escape(title)}</h1>"
+    # The upstream all-weather template embeds a legacy brand bitmap.
+    content = re.sub(r'<img\b[^>]*class="footer"[^>]*alt="SayuStock"[^>]*>', "", content, flags=re.I)
+    header = f'<header class="stock-heading"><div class="stock-heading-copy">{copy}</div>{ART_SLOT}</header>'
+    wrap = f'{header}<div class="stock-upstream-content">{content}</div>{FOOTER_SLOT}'
+    document = document[:source.start(2)] + wrap + document[source.end(2):]
+    return apply_theme(document, recolor=True)
 
 
 __all__ = [

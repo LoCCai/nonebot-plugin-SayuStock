@@ -59,9 +59,11 @@ class KronosRunConfig:
 
 def kronos_run_config() -> KronosRunConfig:
     """从 STOCK_CONFIG 读取 Kronos 运行配置。"""
+    import os
+
     return KronosRunConfig(
-        tokenizer=STOCK_CONFIG.get_config("kronos_tokenizer").data,
-        model=STOCK_CONFIG.get_config("kronos_model").data,
+        tokenizer=os.getenv("SAYUSTOCK_KRONOS_TOKENIZER") or STOCK_CONFIG.get_config("kronos_tokenizer").data,
+        model=os.getenv("SAYUSTOCK_KRONOS_MODEL") or STOCK_CONFIG.get_config("kronos_model").data,
         device=STOCK_CONFIG.get_config("kronos_device").data,
     )
 
@@ -228,6 +230,7 @@ def generate_trading_times(
     *,
     trading_intervals: list[tuple[float, float]] | None = None,
     skip_weekends: bool = True,
+    closed_dates: frozenset[str] = frozenset(),
 ) -> pd.DatetimeIndex:
     """从 start 起按 freq 生成 ``periods`` 个交易时段内时间戳。"""
     intervals = trading_intervals if trading_intervals is not None else [(9.5, 11.5), (13.0, 15.0)]
@@ -249,6 +252,9 @@ def generate_trading_times(
             raise ValueError(f"无法转换 freq 为 Timedelta: {e}") from e
     assert isinstance(freq_td, pd.Timedelta)
 
+    if freq_td <= pd.Timedelta(0):
+        raise ValueError("预测周期须为正")
+    daily_or_longer = freq_td >= pd.Timedelta(days=1)
     times: list[pd.Timestamp] = []
     curr = pd.Timestamp(start)
     max_iters = periods * 1000 + 10000
@@ -256,11 +262,11 @@ def generate_trading_times(
     while len(times) < periods and iters < max_iters:
         iters += 1
         curr = curr + freq_td
-        if skip_weekends and int(curr.weekday()) >= 5:
+        if (skip_weekends and int(curr.weekday()) >= 5) or curr.date().isoformat() in closed_dates:
             continue
         t_float = float(curr.hour) + float(curr.minute) / 60.0 + float(curr.second) / 3600.0
         in_trade = any(start_h <= t_float <= end_h for (start_h, end_h) in intervals)
-        if not in_trade:
+        if not daily_or_longer and not in_trade:
             continue
         if isinstance(curr, pd.Timestamp) and not pd.isna(curr):
             times.append(curr)
@@ -316,10 +322,8 @@ def gdf(df: pd.DataFrame, series: KlineSeries, config: KronosRunConfig | None = 
 
     timestamps = work["timestamps"]
     inferred_freq = pd.Timedelta(days=1)
-    if len(timestamps) >= 2:
-        diff0 = timestamps.iloc[-1] - timestamps.iloc[-2]
-        if isinstance(diff0, pd.Timedelta) and not pd.isna(diff0):
-            inferred_freq = pd.Timedelta(diff0)
+    if series.period not in (KlinePeriod.D1, KlinePeriod.D1_RECENT, KlinePeriod.D1_YEAR) and len(timestamps) >= 2:
+        inferred_freq = pd.Timedelta(timestamps.diff().dropna().median())
 
     freq_minutes = float(inferred_freq.total_seconds()) / 60.0
     logger.info(f"[SayuStock] 股票K线周期: {freq_minutes}")
@@ -376,21 +380,23 @@ def gdf(df: pd.DataFrame, series: KlineSeries, config: KronosRunConfig | None = 
     x_future_ts = work.iloc[future_input_start_index:]["timestamps"].reset_index(drop=True)
 
     timestamps = work["timestamps"]
-    freq = pd.Timedelta(days=1)
-    if len(timestamps) >= 2:
-        diff = timestamps.iloc[-1] - timestamps.iloc[-2]
-        if isinstance(diff, pd.Timedelta) and not pd.isna(diff):
-            freq = pd.Timedelta(diff)
-
     last_raw = timestamps.iloc[-1]
     last_timestamp = pd.Timestamp(last_raw)
     if pd.isna(last_timestamp):
         return ErroText["notData"]
-    # stubs 里 Timestamp(...) / Timedelta(...) 常带 NaTType 联合，运行时已排除 NaT
+    closed_dates: frozenset[str] = frozenset()
+    if series.symbol.exchange in {"SH", "SZ", "BJ"}:
+        from holidays import country_holidays
+
+        calendar = country_holidays("CN", years=[last_timestamp.year, last_timestamp.year + 1])
+        closed_dates = frozenset(day.isoformat() for day in calendar)
+    # 日 K 以交易日期标记，午夜时间戳同样有效。
     pred_times = generate_trading_times(
         cast(pd.Timestamp, last_timestamp),
         pred_len,
-        cast(pd.Timedelta, freq),
+        inferred_freq,
+        skip_weekends=series.symbol.asset_class.value != "crypto",
+        closed_dates=closed_dates,
     )
 
     preds_future_list: list[NDArray[np.floating[Any]]] = []

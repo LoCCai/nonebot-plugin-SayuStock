@@ -150,6 +150,19 @@ class CompositeMarketData:
     async def market_turnover(self) -> MarketTurnover | MarketError:
         return await self._equity.market_turnover()
 
+    async def main_flow_image(self) -> bytes | None:
+        """东财主力资金图；全透明为上游缺图。"""
+        from io import BytesIO
+
+        from ...stock.request_utils import get_image_from_em
+
+        picture = await get_image_from_em(size=(500, 274))
+        if not picture.convert("RGBA").getchannel("A").getbbox():
+            return None
+        with BytesIO() as stream:
+            picture.save(stream, format="PNG")
+            return stream.getvalue()
+
     async def northbound(self) -> NorthboundFlow | MarketError:
         return await self._equity.northbound()
 

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from .features import catalog
+
 PLUGIN_NAME = "SayuStock"
 PLUGIN_VERSION = "0.9.0-qiqi.1"
 PLUGIN_HOMEPAGE = "https://github.com/LoCCai/nonebot-plugin-SayuStock"
@@ -132,6 +134,15 @@ MENU_DATA: list[dict[str, Any]] = [
         "llm_intents": ["网页里问股票", "网页看行情", "在网页看图表"],
     },
 ]
+
+
+for feature in catalog().values():
+    MENU_DATA.append({
+        "func": feature.command, "trigger_method": "消息触发",
+        "trigger_condition": " / ".join((feature.command, *feature.aliases)),
+        "brief_des": feature.usage, "detail_des": feature.usage,
+        "llm_intents": [feature.command, *feature.aliases],
+    })
 
 MENU_BY_FUNC = {item["func"]: item for item in MENU_DATA}
 

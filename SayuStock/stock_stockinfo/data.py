@@ -12,6 +12,7 @@ from gsuid_core.logger import logger
 from ..utils.market import (
     AssetClass,
     KlinePeriod,
+    MarketDataPort,
     get_market,
     is_market_error,
     maybe_otc_fund_query,
@@ -39,6 +40,13 @@ class CloudMapDataResult:
 class CloudMapDataService:
     """根据命令参数组织 MarketDataPort 请求，不解析供应商原始字段。"""
 
+    def __init__(self, market: MarketDataPort | None = None) -> None:
+        self._market = market
+
+    @property
+    def port(self) -> MarketDataPort:
+        return self._market if self._market is not None else get_market()
+
     async def fetch(
         self,
         market: str,
@@ -50,7 +58,7 @@ class CloudMapDataService:
         raw_datas: List[IntradaySeries | KlineSeries] = []
         special_cache_key: Optional[str] = None
         failures: list[str] = []
-        port = get_market()
+        port = self.port
 
         if market == "大盘云图":
             if resolved_sector:
@@ -118,7 +126,7 @@ class CloudMapDataService:
         return text.isdigit() and len(text) == 6
 
     async def _should_compare_otc_fund(self, market: str) -> bool:
-        port = get_market()
+        port = self.port
         for token in self._split_queries(market):
             if not maybe_otc_fund_query(token):
                 continue
@@ -175,7 +183,7 @@ class CloudMapDataService:
             period = KlinePeriod.D1
         start_d = start_time.date() if start_time is not None else None
         end_d = end_time.date() if end_time is not None else None
-        series = await get_market().kline(market, period, start=start_d, end=end_d)
+        series = await self.port.kline(market, period, start=start_d, end=end_d)
         return series.message if is_market_error(series) else series
 
     async def fetch_compare_stocks(
@@ -186,22 +194,12 @@ class CloudMapDataService:
         *,
         failures: list[str] | None = None,
     ) -> tuple[CloudMapRawData, List[KlineSeries]]:
-        markets = [item.strip() for item in market.replace("，", " ").replace(",", " ").split() if item.strip()]
-        expanded: List[str] = []
-        for item in markets:
-            if item in {"个股对比", "对比个股", "个股", "对比"}:
-                continue
-            query = "A500ETF" if item == "A500" else item
-            codes = await self._fetch_sector_codes_by_query(query)
-            if codes:
-                expanded.extend(codes)
-            else:
-                expanded.append(query)
+        expanded = await self.expand_for_compare(self._split_queries(market))
 
         results: List[KlineSeries] = []
         start_d = start_time.date() if start_time is not None else None
         end_d = end_time.date() if end_time is not None else None
-        port = get_market()
+        port = self.port
         for query in expanded:
             # 默认窗口与历史一致：未指定时间时走 D1_YEAR（约 365 自然日）
             # 重构时曾误写成 D1_RECENT（仅 50 天），用户会感觉像「最近一个月」
@@ -217,8 +215,23 @@ class CloudMapDataService:
             return ErroText["notData"], []
         return results[0], results
 
+    async def expand_for_compare(self, markets: list[str]) -> list[str]:
+        expanded: List[str] = []
+        for item in markets:
+            if item in {"个股对比", "对比个股", "个股", "对比"}:
+                continue
+            query = "A500ETF" if item == "A500" else item
+            codes = await self._fetch_sector_codes_by_query(query)
+            if codes:
+                expanded.extend(codes)
+            else:
+                expanded.append(query)
+        return list(dict.fromkeys(expanded))
+
     async def _fetch_sector_codes_by_query(self, query: str) -> List[str]:
-        port = get_market()
+        port = self.port
+        if self._is_plain_code(query):
+            return []
         menu = await port.sector_menu("industry")
         if not is_market_error(menu) and query in menu:
             snap = await port.board(str(menu[query]), limit=13, sort_asc=False)
@@ -239,7 +252,7 @@ class CloudMapDataService:
         return []
 
     async def _fetch_sector_codes(self, board_code: str) -> List[str]:
-        snap = await get_market().board(board_code, limit=13, sort_asc=False)
+        snap = await self.port.board(board_code, limit=13, sort_asc=False)
         if is_market_error(snap):
             return []
         return [r.code for r in snap.rows if r.code]
@@ -262,7 +275,7 @@ class CloudMapDataService:
         if not codes:
             return ErroText["notData"], []
 
-        port = get_market()
+        port = self.port
         results = await asyncio.gather(*[port.intraday(code, ndays=ndays) for code in codes])
         valid: List[IntradaySeries] = []
         for code, item in zip(codes, results, strict=True):
@@ -288,7 +301,7 @@ class CloudMapDataService:
         failures: list[str] | None = None,
     ) -> tuple[CloudMapRawData, List[IntradaySeries]]:
         _ = start_time, end_time
-        port = get_market()
+        port = self.port
         market_list = market.split(" ")
         if len(market_list) == 1:
             series = await port.intraday(market_list[0], ndays=ndays)

@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import asyncio
 
-from .ai.contracts import ToolContext
+from .config import get_value
 from .ai.tools import TOOLS, run_tool
 from .artifacts import get_artifact
-from .config import get_value
+from .ai.contracts import ToolContext
 
 
 def definitions():
@@ -31,4 +31,6 @@ async def call(name, arguments, *, qq, thread, is_admin, confirmed):
             raise ValueError("无法读取本次生成的图表")
         html = await asyncio.to_thread(owned[1].read_text, encoding="utf-8")
         media.append((item.title, "html", html))
+    if not media:
+        media.extend((result.text[:80] or "股票图表", "image", image) for image in result.images)
     return result.text, result.structured, media

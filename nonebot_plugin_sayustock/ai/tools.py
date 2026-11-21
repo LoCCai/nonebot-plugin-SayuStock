@@ -33,6 +33,7 @@ from ..services.dataviz import (
     series_summary,
     line_chart_html,
 )
+from ..services.overview import summary as _summary_overview, model_data
 
 MARKET_PERIODS = ["5k", "15k", "30k", "60k", "日k", "周k", "月k", "季k", "年k"]
 
@@ -49,34 +50,6 @@ def _pct(value: Any) -> str:
     except (TypeError, ValueError):
         return "—"
     return f"{number:+.2f}%"
-
-
-def _summary_overview(data: dict[str, Any]) -> str:
-    lines = [f"【A股大盘概览】{data.get('as_of', '')}"]
-    for item in (data.get("indices") or [])[:8]:
-        lines.append(f"{item.get('label')}: {item.get('price')} ({_pct(item.get('change_pct'))})")
-    breadth = data.get("breadth") or {}
-    if breadth:
-        lines.append(
-            f"涨跌家数: 上涨 {breadth.get('up', 0)} / 下跌 {breadth.get('down', 0)} / "
-            f"平 {breadth.get('flat', 0)}；涨停 {breadth.get('limit_up', 0)}，"
-            f"跌停 {breadth.get('limit_down', 0)}"
-        )
-    turnover = data.get("turnover") or {}
-    if isinstance(turnover.get("amount"), (int, float)):
-        lines.append(f"两市成交额: {float(turnover['amount']) / 1e8:,.0f} 亿")
-    north = data.get("northbound") or {}
-    if north:
-        lines.append(f"北向净流入: {float(north.get('sh_net_yi', 0)) + float(north.get('sz_net_yi', 0)):,.2f} 亿")
-    rise = (data.get("industries") or {}).get("rise") or []
-    fall = (data.get("industries") or {}).get("fall") or []
-    if rise:
-        lines.append("行业领涨: " + "、".join(f"{r['name']} {_pct(r.get('change_pct'))}" for r in rise[:5]))
-    if fall:
-        lines.append("行业领跌: " + "、".join(f"{r['name']} {_pct(r.get('change_pct'))}" for r in fall[:5]))
-    for warning in (data.get("warnings") or [])[:4]:
-        lines.append(f"⚠ {warning}")
-    return "\n".join(lines)
 
 
 def _summary_quote(data: dict[str, Any]) -> str:
@@ -105,6 +78,10 @@ def _summary_technical(data: dict[str, Any]) -> str:
         "多头信号: " + ("、".join(data.get("signals") or []) or "暂无"),
         "风险信号: " + ("、".join(data.get("risks") or []) or "暂无"),
     ]
+    report = data.get("technical_report")
+    if report:
+        lines.insert(1, f"原版技术评分 {report['score']}/100 · {report['trend']}；{report['summary']}")
+        lines.append("支撑与压力 " + _json(report["levels"]))
     return "\n".join(lines)
 
 
@@ -150,16 +127,17 @@ def _artifact_note(ctx: ToolContext, artifacts: list[Any]) -> str:
 
 
 async def market_overview(*, include_chart: bool = False, _tool_context: ToolContext) -> ToolOutcome:
-    data = await get_runtime().market.overview()
-    html = overview_html(data)
+    data = await get_runtime().market.overview(include_flow=include_chart)
     image = None
     artifacts: list[Any] = []
     if include_chart:
-        image, artifacts = await _chart_artifacts(title="A股大盘概览", html=html, width=1280, ctx=_tool_context)
+        image, artifacts = await _chart_artifacts(
+            title="A股大盘概览", html=overview_html(data), width=1280, ctx=_tool_context
+        )
     text = _summary_overview(data) + _artifact_note(_tool_context, artifacts)
     return ToolOutcome(
         text=text,
-        structured={"overview": data},
+        structured={"overview": model_data(data)},
         images=[image] if image else [],
         artifacts=artifacts,
         metadata={"provider": data.get("provider"), "as_of": data.get("as_of")},
@@ -226,16 +204,19 @@ async def sector_tool(
     *,
     kind: str = "industry",
     limit: int = 15,
+    falling: bool = False,
     _tool_context: ToolContext,
 ) -> ToolOutcome:
     normalized = "concept" if kind in {"concept", "概念"} else "industry"
-    data = await get_runtime().market.board(normalized, limit=max(1, min(limit, 50)))
+    data = await get_runtime().market.board(normalized, limit=max(1, min(limit, 50)), falling=falling)
     rows = data.get("rows") or []
     title = "行业板块" if normalized == "industry" else "概念板块"
-    lines = [f"【{title}涨幅榜】来源 {data.get('provider') or '多源'}"]
+    member_key = "fall_name" if falling else "lead_name"
+    direction = "领跌" if falling else "领涨"
+    lines = [f"【{title}{direction}榜】来源 {data.get('provider') or '多源'}"]
     lines.extend(
         f"{index}. {row.get('name')} {_pct(row.get('change_pct'))} "
-        f"成交额 {row.get('amount')} 领涨 {row.get('lead_name') or '—'}"
+        f"成交额 {row.get('amount')} {direction} {row.get(member_key) or '—'}"
         for index, row in enumerate(rows[: max(1, min(limit, 30))], 1)
     )
     return ToolOutcome(
@@ -370,9 +351,9 @@ async def generate_chart_tool(
     runtime = get_runtime()
     kind = (chart_type or "kline").lower()
     if kind in {"overview", "market", "大盘"}:
-        data = await runtime.market.overview()
+        data = await runtime.market.overview(include_flow=True)
         html, width, title = overview_html(data), 1280, "A股大盘概览"
-        structured = {"chart_type": "overview", "overview": data}
+        structured = {"chart_type": "overview", "overview": model_data(data)}
     elif kind in {"intraday", "分时"}:
         if queries and len(queries) > 1:
             from ..services.charts import build_multi_intraday_html
@@ -440,10 +421,11 @@ async def list_artifacts_tool(*, _tool_context: ToolContext) -> ToolOutcome:
 async def rank_tool(
     *,
     rank_by: str = "main_inflow",
+    high_first: bool | None = None,
     limit: int = 10,
     _tool_context: ToolContext,
 ) -> ToolOutcome:
-    data = await get_runtime().market.rank(rank_by, limit=max(1, min(limit, 50)))
+    data = await get_runtime().market.rank(rank_by, limit=max(1, min(limit, 50)), high_first=high_first)
     rows = data.get("rows") or []
     lines = [f"【{data.get('rank_by_label') or rank_by}】{data.get('unit_hint') or ''}"]
     lines.extend(
@@ -801,6 +783,7 @@ register(
             "type": "object",
             "properties": {
                 "kind": {"type": "string", "enum": ["industry", "concept"], "default": "industry"},
+                "falling": {"type": "boolean", "default": False, "description": "按跌幅查看领跌板块"},
                 "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 15},
             },
             "required": [],
@@ -960,6 +943,7 @@ register(
         parameters={
             "type": "object",
             "properties": {
+                "high_first": {"type": "boolean", "description": "按指标从高到低排列，false 为升序"},
                 "rank_by": {
                     "type": "string",
                     "enum": [
@@ -1267,6 +1251,68 @@ register(
         timeout_seconds=10,
     )
 )
+
+
+def _register_features() -> None:
+    from ..features import invoke, catalog, web_event
+    from ..platform import from_event
+
+    def select(writes: bool):
+        async def handler(*, command: str, argument: str = "", group_id: str = "", _tool_context: ToolContext):
+            spec = catalog().get(command)
+            if not spec or spec.writes != writes:
+                raise ValueError("该操作不属于此工具")
+            if writes and not _tool_context.confirmed:
+                raise ValueError("此操作需要先确认")
+            if _tool_context.platform == "qweb":
+                event = await web_event(_tool_context.user_id, command + " " + argument, group_id or None)
+            elif _tool_context.bot is not None and _tool_context.event is not None:
+                event = from_event(_tool_context.bot, _tool_context.event)
+                if group_id and group_id != event.group_id:
+                    raise ValueError("请在对应群内执行")
+            else:
+                raise ValueError("未取得本次操作的身份")
+            event._extra["host_model_tool"] = True
+            event._extra["host_thread"] = _tool_context.session_id
+            result = await invoke(spec, argument, event)
+            return ToolOutcome(
+                result.text,
+                result.structured,
+                ([result.image] if result.image else []) + result.extra_images,
+                result.artifacts,
+            )
+
+        return handler
+
+    for writes, name in ((False, "sayustock_research_feature"), (True, "sayustock_manage_feature")):
+        names = [f.command for f in catalog().values() if f.writes == writes]
+        if names:
+            register(
+                ToolDefinition(
+                    name=name,
+                    description=("确认后办理股票业务" if writes else "读取股票专题与图表") + "：" + "、".join(names),
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "command": {"type": "string", "enum": names},
+                            "argument": {"type": "string", "maxLength": 2000, "description": "标的、周期或功能参数"},
+                            "group_id": {
+                                "type": "string",
+                                "pattern": "^[0-9]{1,12}$",
+                                "description": "群业务使用的授权群",
+                            },
+                        },
+                        "required": ["command"],
+                        "additionalProperties": False,
+                    },
+                    effect="mutating" if writes else "read_only",
+                    handler=select(writes),
+                    timeout_seconds=90 if writes else 600,
+                )
+            )
+
+
+_register_features()
 
 
 def tool_schemas() -> list[dict[str, Any]]:

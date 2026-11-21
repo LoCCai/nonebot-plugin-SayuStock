@@ -29,25 +29,37 @@
 的路径能写，用户指使一律拒。
 """
 
+from __future__ import annotations
+
 import json
 import datetime as _dt
-from typing import Any, Set, Dict, TypedDict
+from typing import TYPE_CHECKING, Any, Set, Dict, TypedDict
+from importlib.util import find_spec
 
-from pydantic_ai import RunContext
+if TYPE_CHECKING or find_spec("gsuid_core.sv") is not None:
+    from pydantic_ai import RunContext
 
-from gsuid_core.ai_core.models import ToolContext
-from gsuid_core.ai_core.register import ai_tools
-from gsuid_core.ai_core.planning.runtime import PlanRunContext, get_plan_context
+    from gsuid_core.ai_core.models import ToolContext
+    from gsuid_core.ai_core.register import ai_tools
+    from gsuid_core.ai_core.planning.runtime import PlanRunContext, get_plan_context
 
-from . import db, broadcast, strategies, account_scope
+    from . import broadcast as broadcast
+else:
+    # QWeb registers explicit public operations in its own catalogue.
+    def ai_tools(**metadata):
+        return lambda handler: handler
+
+    def get_plan_context():
+        return None
+
+from . import db, strategies, account_scope
 from .strategy import (
     MODE_RULES,
-    MACRO_SEVERE_FLAG_KEY,
-    MACRO_SEVERE_TITLES_KEY,
     normalize_stop_pct,
     parse_llm_json_object,
     normalize_plan_indicators,
 )
+from .entry_gate import _gate_entry, _strategy_of
 from .indicators import compute_indicators
 from ..utils.market import KlinePeriod, get_market, is_market_error
 from .quote_service import quote_service
@@ -254,60 +266,6 @@ def _visible_to_papertrade_agent(ctx: RunContext[ToolContext]) -> bool:
 async def _deny_write(account: SayuPaperAccount | None) -> str:
     """写工具的执行层鉴权；放行返回 ``""``，否则返回给 LLM 的拒绝理由。"""
     return await account_scope.deny_write_reason(_root_task_id(), account)
-
-
-def _strategy_of(account: SayuPaperAccount) -> tuple[strategies.Strategy, dict[str, Any]]:
-    """拿账户的策略对象 + 归一化参数。"""
-    return strategies.resolve_with_params(
-        account.strategy_id,
-        db.parse_strategy_params(account.strategy_params),
-    )
-
-
-async def _gate_entry(
-    account: SayuPaperAccount,
-    *,
-    stock_code: str,
-    indicators: dict[str, Any],
-    score: float,
-    source: str,
-    side: str,
-) -> str:
-    """落库硬闸。量能盘的顶底/放量在这里用日 K 函数算，覆盖 Agent 传入值。
-
-    buy 侧再把宏观事件表里「进行中 + risk_off + 高危」的事实注入 indicators
-    （``_macro_severe_*`` 内部键），让 ``macro_gate_reason`` 能拒掉与表矛盾的「进攻」。
-    """
-    from .strategies.base import _is_stop_triggered
-    from .strategies.volume_extremum import VolumeExtremumStrategy, load_structure
-
-    strategy, params = _strategy_of(account)
-    merged = dict(normalize_plan_indicators(indicators))
-    # 止损卖必须先放行：load_structure 失败会短路，把 stop_triggered 旁路锁死
-    if str(side).strip().lower() == "sell" and _is_stop_triggered(merged):
-        return ""
-    if str(side).strip().lower() == "buy":
-        from ..stock_macro.repo import MacroEventRepo
-        from ..stock_macro.ai_tools import severe_risk_off_titles
-
-        severe = await MacroEventRepo.list_open_severe()
-        merged[MACRO_SEVERE_FLAG_KEY] = bool(severe)
-        merged[MACRO_SEVERE_TITLES_KEY] = severe_risk_off_titles(severe)
-    if strategy.id == VolumeExtremumStrategy.id:
-        measured = await load_structure(stock_code, params, intent=side)
-        if isinstance(measured, str):
-            return measured
-        merged.update(measured.as_indicators())
-    return strategy.validate_entry(
-        params,
-        strategies.GateInput(
-            stock_code=stock_code,
-            indicators=merged,
-            score=score,
-            source=source,
-            side=side,
-        ),
-    )
 
 
 def _plan_dict_from_json(*raws: str) -> dict[str, Any]:
@@ -1135,6 +1093,7 @@ async def papertrade_trade_insert(
     )
     # 成交成功 → 系统确定性向该盘订阅的所有群推一行成交冒泡（不依赖 agent 最终输出）。
     if result.ok:
+        from . import broadcast
         await broadcast.broadcast_fill(
             acc,
             side=side,

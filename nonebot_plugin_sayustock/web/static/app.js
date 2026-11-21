@@ -24,6 +24,7 @@
     research: ["个股研究", "全周期行情、技术分析、财务、估值与报告"],
     watchlist: ["我的自选", "自选股与最新行情"],
     artifacts: ["图表与报告", "当前账户的 HTML / PNG 制品"],
+    workbench: ["研究与模拟盘", "专题图表、策略与账户"],
     help: ["命令与帮助", "指令目录"],
   });
 
@@ -262,6 +263,25 @@
     return `<button class="ghost artifact-action" type="button" data-preview-key="${esc(key)}">${esc(label)}</button>`;
   }
 
+  function renderLedgerTable(data) {
+    const schemas = {
+      accounts: {name: "盘名", strategy_id: "策略", cash: "现金", total_equity: "净值", total_pnl_pct: "累计收益 (%)"},
+      trades: {executed_at: "成交时间", name: "标的", side: "方向", qty: "股数", price: "成交价", fee: "费用"},
+      strategies: {id: "策略编号", name: "策略"},
+      events: {title: "事件", severity: "影响等级", direction: "方向", result: "进展"}
+    };
+    for (const [key, fields] of Object.entries(schemas)) {
+      const rows = data[key];
+      if (!Array.isArray(rows) || !rows.length || !rows.every(r => r && typeof r === "object")) continue;
+      const cols = Object.keys(fields).filter(k => rows.some(row => row[k] != null));
+      if (!cols.length) continue;
+      const labels = {buy: "买入", sell: "卖出"};
+      return `<div class="result-table-wrap"><table><thead><tr>${cols.map(k => `<th>${fields[k]}</th>`).join("")}</tr></thead><tbody>${rows.map(row =>
+        `<tr>${cols.map(k => `<td>${esc(String(k === "side" ? labels[row[k]] || row[k] : row[k] ?? "—"))}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
+    }
+    return "";
+  }
+
   function renderCommand(payload, command, target) {
     const node = resolveOutput(target);
     if (!node) return;
@@ -282,13 +302,18 @@
       }));
     }
     const text = typeof payload?.text === "string" && payload.text.trim() ? payload.text : "命令已执行，返回空文本。";
+    const report = artifacts.find(item => String(item.mime || "").startsWith("text/html"));
+    const details = payload?.structured || {};
+    const table = renderLedgerTable(details);
+    const inline = report ? `<iframe class="inline-report" sandbox="allow-same-origin" referrerpolicy="no-referrer" loading="lazy" title="${esc(report.title || command)}" src="${esc(artifactPreview(report).url)}"></iframe>` : "";
     node.innerHTML = `
       <div class="output-head">
         <span class="output-label">任务结果</span>
         <code class="output-command">${esc(command)}</code>
         <button class="icon-btn" type="button" data-output-close aria-label="关闭结果">×</button>
       </div>
-      <pre class="output-text">${esc(text)}</pre>
+      ${inline || table}
+      ${inline || table ? `<details class="result-details"><summary>文字详情</summary><pre class="output-text">${esc(text)}</pre></details>` : `<pre class="output-text">${esc(text)}</pre>`}
       ${actions.length ? `<div class="output-actions">${actions.join("")}</div>` : ""}`;
   }
 
@@ -444,6 +469,7 @@
     $("view-title").textContent = meta[0];
     $("view-sub").textContent = meta[1];
     if (name === "market" && !state.overviewLoaded) void loadOverview();
+    if (name === "workbench") void loadFeatures();
     if (name === "watchlist") void loadWatchlist();
     if (name === "artifacts") void loadArtifacts();
   }
@@ -479,7 +505,7 @@
   async function loadOverview() {
     try {
       const payload = await api("/overview");
-      renderOverview(payload?.data || {});
+      renderOverview(payload.data, payload);
       state.overviewLoaded = true;
     } catch (error) {
       toast(`大盘数据加载失败：${error?.message || error}`, true);
@@ -487,9 +513,9 @@
     }
   }
 
-  function renderOverview(data) {
+  function renderOverview(data, presentation) {
     const indices = Array.isArray(data.indices) ? data.indices : [];
-    $("index-grid").innerHTML = indices.slice(0, 12).map((item) => {
+    $("index-grid").innerHTML = indices.map((item) => {
       const direction = tone(item.change_pct);
       const spark = typeof item.spark === "string" && item.spark.includes("<svg") ? item.spark : "";
       return `<article class="index-card ${direction}">
@@ -506,7 +532,6 @@
     const down = numeric(breadth.down);
     const flat = numeric(breadth.flat);
     const complete = up !== null && down !== null && flat !== null;
-    const total = complete ? up + down + flat : null;
     $("stat-up").textContent = up === null ? "—" : fmtInt(up);
     $("stat-down").textContent = down === null ? "—" : fmtInt(down);
     $("stat-flat").textContent = flat === null ? "—" : fmtInt(flat);
@@ -514,23 +539,24 @@
     $("stat-limit-down").textContent = numeric(breadth.limit_down) === null ? "—" : fmtInt(breadth.limit_down);
     $("stat-turnover").textContent = fmtMoney(data.turnover && data.turnover.amount);
     $("stat-north").textContent = northboundText(data.northbound);
-    $("breadth-note").textContent = complete ? "涨跌分布" : "涨跌数据不完整";
+    $("breadth-note").textContent = complete ? "单位 · 家" : "涨跌数据不完整";
     $("breadth-legend").innerHTML = [
       `<span class="up">上涨 ${esc(up === null ? "—" : fmtInt(up))}</span>`,
       `<span class="flat">平盘 ${esc(flat === null ? "—" : fmtInt(flat))}</span>`,
       `<span class="down">下跌 ${esc(down === null ? "—" : fmtInt(down))}</span>`,
     ].join("");
-    if (complete && total > 0) {
-      $("breadth-bar").className = "breadth";
-      $("breadth-bar").innerHTML = [
-        `<span class="up" style="width:${((up / total) * 100).toFixed(2)}%"></span>`,
-        `<span class="flat" style="width:${((flat / total) * 100).toFixed(2)}%"></span>`,
-        `<span class="down" style="width:${((down / total) * 100).toFixed(2)}%"></span>`,
-      ].join("");
-    } else {
-      $("breadth-bar").className = "breadth breadth-empty";
-      $("breadth-bar").innerHTML = `<span class="muted">—</span>`;
-    }
+    $("breadth-bar").innerHTML = presentation.breadth_svg;
+    $("overview-mood").textContent = presentation.mood;
+    const moodImage = $("market-mood-image");
+    moodImage.hidden = !presentation.mood_image;
+    if (presentation.mood_image) moodImage.src = presentation.mood_image;
+    else moodImage.removeAttribute("src");
+    $("turnover-note").textContent = data.turnover_note || "";
+    const flow = $("main-flow");
+    flow.hidden = !data.main_flow_uri;
+    $("main-flow-note").hidden = !flow.hidden;
+    if (data.main_flow_uri) flow.src = data.main_flow_uri;
+    else flow.removeAttribute("src");
 
     const warnings = Array.isArray(data.warnings) ? data.warnings : [];
     const warningNode = $("overview-warnings");
@@ -538,11 +564,13 @@
     warningNode.innerHTML = warnings.slice(0, 6).map((warning) => `<p>⚠ ${esc(warning)}</p>`).join("");
 
     $("overview-time").textContent = data.as_of
-      ? `数据时间 ${plain(data.as_of)} · 缺失字段显示为「—」`
+      ? `${plain(data.session_label)} · 生成于 ${plain(data.as_of)}`
       : "数据时间 —";
-    $("overview-provider").textContent = `数据源 ${plain(data.provider)}`;
+    $("overview-provider").textContent = `数据源 ${plain(presentation.sources)}`;
     $("industry-table").querySelector("tbody").innerHTML = boardRows((data.industries || {}).rise);
     $("concept-table").querySelector("tbody").innerHTML = boardRows((data.concepts || {}).rise);
+    $("industry-fall").querySelector("tbody").innerHTML = boardRows(data.industries?.fall, true);
+    $("concept-fall").querySelector("tbody").innerHTML = boardRows(data.concepts?.fall, true);
     state.chart = {
       type: "overview",
       q: "上证指数",
@@ -565,14 +593,14 @@
     return `${known}（另一侧缺失）`;
   }
 
-  function boardRows(rows) {
-    const list = Array.isArray(rows) ? rows.slice(0, 10) : [];
+  function boardRows(rows, falling = false, limit = 20) {
+    const list = Array.isArray(rows) ? rows.slice(0, limit) : [];
     if (!list.length) return `<tr><td colspan="4">暂无板块数据</td></tr>`;
     return list.map((row) => `<tr>
       <td>${esc(plain(row.name))}</td>
       <td class="num ${tone(row.change_pct)}">${esc(fmtPct(row.change_pct))}</td>
-      <td>${esc(plain(row.lead_name))}</td>
-      <td class="num ${tone(row.lead_change_pct)}">${esc(fmtPct(row.lead_change_pct))}</td>
+      <td>${esc(plain(falling ? row.fall_name : row.lead_name))}</td>
+      <td class="num ${tone(falling ? row.fall_change_pct : row.lead_change_pct)}">${esc(fmtPct(falling ? row.fall_change_pct : row.lead_change_pct))}</td>
     </tr>`).join("");
   }
 
@@ -837,9 +865,20 @@
     void runCommand(`股票报告${query ? ` ${query}` : ""}`, "#report-output");
   }
 
-  function runSector() {
-    const kind = $("sector-kind")?.value === "concept" ? "概念板块" : "行业板块";
-    void runCommand(kind, "#market-output");
+  async function runSector() {
+    const kind = $("sector-kind").value;
+    const falling = $("sector-order").value === "fall";
+    try {
+      const {data} = await api("/sector?" + new URLSearchParams({kind, falling: String(falling)}));
+      const member = falling ? "领跌" : "领涨";
+      const output = $("market-output");
+      output.hidden = false;
+      output.innerHTML = `<div class="table-wrap"><table class="data-table"><thead><tr>
+        <th>板块</th><th>涨跌幅</th><th>${member}股</th><th>个股涨跌幅</th>
+        </tr></thead><tbody>${boardRows(data.rows, falling, 30)}</tbody></table></div>`;
+    } catch (e) {
+      toast(String(e?.message || e), true);
+    }
   }
 
   function runRank() {
@@ -1016,7 +1055,84 @@
     });
   }
 
+  let features = [];
+  let featureGroupsLoaded = false;
+
+  async function loadFeatures() {
+    if (features.length) return;
+    try {
+      features = (await api("/features")).items;
+      $("feature-category").replaceChildren(...Array.from(new Set(features.map(f => f.category)), c => new Option(c, c)));
+      chooseCategory();
+    } catch (e) {
+      $("feature-usage").textContent = String(e.message || e);
+    }
+  }
+
+  async function loadFeatureGroups() {
+    if (featureGroupsLoaded) return;
+    try {
+      const result = await api("/features/groups");
+      $("feature-group").replaceChildren(new Option("个人", ""), ...result.items.map(g => new Option(g.name || g.id, g.id)));
+      featureGroupsLoaded = true;
+    } catch (e) {
+      toast(String(e.message || e), true);
+    }
+  }
+
+  function chooseCategory() {
+    const list = features.filter(f => f.category === $("feature-category").value);
+    $("feature-command").replaceChildren(...list.map(f => new Option(f.command, f.command)));
+    chooseFeature();
+  }
+
+  function chooseFeature() {
+    const f = features.find(f => f.command === $("feature-command").value);
+    $("feature-usage").textContent = f?.usage || "";
+    $("feature-submit").disabled = !f;
+    $("feature-submit").textContent = f?.writes ? "办理" : "查询";
+    $("feature-argument").value = "";
+    $("feature-output").hidden = true;
+  }
+
+  async function submitFeature(e) {
+    e.preventDefault();
+    const spec = features.find(f => f.command === $("feature-command").value);
+    if (!spec || $("feature-submit").disabled) return;
+    const body = {argument: valueOf("feature-argument"), group_id: valueOf("feature-group")};
+    $("feature-submit").disabled = true;
+    try {
+      if (spec.writes) {
+        const dialog = $("feature-confirm");
+        $("feature-confirm-detail").textContent = [spec.command, body.argument, $("feature-group").selectedOptions[0].text].filter(Boolean).join(" · ");
+        dialog.returnValue = "";
+        const closed = new Promise(resolve => dialog.addEventListener("close", resolve, {once: true}));
+        dialog.showModal();
+        await closed;
+        if (dialog.returnValue !== "confirm") return;
+        body.confirmed = true;
+      }
+      const result = await api("/features/" + encodeURIComponent(spec.command), {method: "POST", body: JSON.stringify(body)});
+      renderCommand(result, spec.command, "#feature-output");
+    } catch (error) {
+      toast(String(error?.message || error), true);
+    } finally {
+      $("feature-submit").disabled = false;
+    }
+  }
+
   function bindEvents() {
+    const boardTabs = [...document.querySelectorAll("[data-board-tab]")];
+    boardTabs.forEach(tab => tab.addEventListener("click", () => {
+      for (const other of boardTabs) {
+        $(other.getAttribute("aria-controls")).hidden = other !== tab;
+        other.setAttribute("aria-pressed", String(other === tab));
+      }
+    }));
+    $("feature-category").addEventListener("change", chooseCategory);
+    $("feature-command").addEventListener("change", chooseFeature);
+    $("feature-group").addEventListener("focus", loadFeatureGroups);
+    $("feature-form").addEventListener("submit", submitFeature);
     document.querySelectorAll("[data-view]").forEach((item) => {
       item.addEventListener("click", () => showView(item.dataset.view));
     });

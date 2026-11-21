@@ -11,6 +11,7 @@ from nonebot.log import logger
 from .menu import USAGE
 from .config import get_value
 from .runtime import get_runtime, artifact_url
+from .features import invoke, lookup, catalog
 from .platform import UnifiedEvent, send_text, send_image
 from .artifacts import Artifact, create_html
 from .watchlist import owner_key
@@ -19,13 +20,11 @@ from .services.charts import (
     ChartRenderError,
     rasterize,
     overview_html,
-    build_kline_html,
     build_report_html,
-    build_intraday_html,
     compare_series_html,
-    build_multi_intraday_html,
 )
 from .services.market import MarketServiceError, normalize_period
+from .services.overview import summary as overview_summary
 
 
 @dataclass(slots=True)
@@ -36,6 +35,7 @@ class CommandResult:
 
     extra_images: list[bytes] = field(default_factory=list)
     image_only: bool = False
+    structured: dict = field(default_factory=dict)
 
     def with_links(self) -> str:
         if not self.artifacts:
@@ -68,6 +68,10 @@ async def help_result() -> CommandResult:
     lines = [
         "【SayuStock · NoneBot2】",
         USAGE,
+        *(
+            "、".join(f.command for f in catalog().values() if f.category == category)
+            for category in dict.fromkeys(f.category for f in catalog().values())
+        ),
         "",
         "提示：默认命令前缀由 NoneBot 的 COMMAND_START 决定；也支持直接发送“大盘概览”。",
         "支持 OneBot v11 / OneBot v12 / QQ 官方机器人。",
@@ -77,77 +81,61 @@ async def help_result() -> CommandResult:
 
 async def overview_result(*, owner: str = "", with_image: bool = True) -> CommandResult:
     runtime = get_runtime()
-    data = await runtime.market.overview()
+    data = await runtime.market.overview(include_flow=True)
     html = overview_html(data)
     image = await _render(html, 1280) if with_image else None
-    lines = [f"【A股大盘概览】{data.get('as_of', '')}"]
-    for item in (data.get("indices") or [])[:6]:
-        pct = item.get("change_pct")
-        sign = "+" if isinstance(pct, (int, float)) and pct > 0 else ""
-        lines.append(
-            f"{item.get('label')}: {item.get('price')} ({sign}{pct:.2f}%)"
-            if isinstance(pct, (int, float))
-            else f"{item.get('label')}: {item.get('price')}"
-        )
-    breadth = data.get("breadth") or {}
-    if breadth:
-        lines.append(
-            f"上涨 {breadth.get('up', 0)} / 下跌 {breadth.get('down', 0)} / "
-            f"涨停 {breadth.get('limit_up', 0)} / 跌停 {breadth.get('limit_down', 0)}"
-        )
-    for warning in (data.get("warnings") or [])[:3]:
-        lines.append(f"⚠ {warning}")
-    text = "\n".join(lines)
+    text = overview_summary(data)
     artifact = create_html("A股大盘概览", html, kind="chart", owner=owner, meta={"command": "overview"})
     return CommandResult(text, image, [artifact])
 
 
 async def stock_result(raw: str, *, owner: str = "", with_image: bool = True) -> CommandResult:
-    runtime = get_runtime()
-    from SayuStock.utils.stock_period import parse_stock_img_request
+    from SayuStock.utils import render_text
+    from SayuStock.utils.utils import get_vix_name
+    from SayuStock.render.kline import prepare_kline
+    from SayuStock.render.compare import prepare_compare
+    from SayuStock.render.intraday import prepare_multi_intraday, prepare_single_intraday
+    from SayuStock.utils.stock_period import parse_stock_img_request, intraday_ndays_from_sector
+    from SayuStock.stock_stockinfo.data import CloudMapDataService
+
+    from .services.charts import chart_from_page
 
     content, sector = parse_stock_img_request(raw)
     if not content:
         return CommandResult("请后跟股票代码或名称，例如：个股 600519 / 个股 日k 贵州茅台")
-    if sector.startswith("single-stock-kline-"):
-        period_code = sector.rsplit("-", 1)[-1]
-        period_map = {
-            "5": "5k",
-            "15": "15k",
-            "30": "30k",
-            "60": "60k",
-            "100": "日k",
-            "101": "日k",
-            "102": "周k",
-            "103": "月k",
-            "104": "季k",
-            "105": "半年k",
-            "106": "年k",
-        }
-        period = period_map.get(period_code, "日k")
-        html, width, title = await build_kline_html(runtime.market, content, period)
-        image = await _render(html, width) if with_image else None
-        artifact = create_html(title, html, kind="chart", owner=owner)
-        text = f"【{title}】已生成 K 线图。"
-        return CommandResult(text, image, [artifact], image_only=True)
-    if sector.startswith("single-stock-ndays-"):
-        ndays = int(sector.rsplit("-", 1)[-1])
+    if get_vix_name(content) and sector != "single-stock":
+        return CommandResult("VIX 仅支持当日分时")
+    data = await CloudMapDataService(get_runtime().market.market).fetch(content, sector, None, None)
+    values = data.raw_data
+    if isinstance(values, str):
+        return CommandResult(values)
+    if data.sector == "compare-stock":
+        page = prepare_compare(data.raw_datas)
+        text = render_text.compare_text(data.raw_datas)
+    elif sector.startswith("single-stock-kline-"):
+        page = prepare_kline(values)
+        text = render_text.kline_text(values, sector)
     else:
-        ndays = 1
-    parts = content.split()
-    if len(parts) > 1:
-        html, width, title = await build_multi_intraday_html(runtime.market, parts, ndays)
-    else:
-        html, width, title = await build_intraday_html(runtime.market, content, ndays)
-    image = await _render(html, width) if with_image else None
-    artifact = create_html(title, html, kind="chart", owner=owner)
-    text = f"【{title}】"
-    return CommandResult(text, image, [artifact], image_only=True)
+        page = prepare_multi_intraday(data.raw_datas) if data.raw_datas else prepare_single_intraday(values)
+        text = render_text.single_stock_text(data.raw_datas or values, ndays=intraday_ndays_from_sector(sector) or 1)
+    if isinstance(page, str):
+        return CommandResult(page)
+    html = chart_from_page(page)
+    artifact = create_html(page.title, html, kind="chart", owner=owner)
+    image = await _render(html, page.width) if with_image else None
+    if data.failures:
+        text += "\n未取得行情：" + "；".join(data.failures)
+    return CommandResult(text, image, [artifact], structured={"failures": list(data.failures)})
 
 
-async def compare_result(raw: str, *, owner: str = "", with_image: bool = True) -> CommandResult:
+async def compare_result(
+    raw: str, *, event: UnifiedEvent | None = None, owner: str = "", with_image: bool = True
+) -> CommandResult:
     runtime = get_runtime()
-    tokens = raw.replace("，", " ").split()
+    from SayuStock.utils.time_range import parse_time_range
+
+    start, end, content = parse_time_range(raw)
+    tokens = content.replace("，", " ").replace(",", " ").split()
     period = "日k"
     if tokens:
         try:
@@ -155,9 +143,13 @@ async def compare_result(raw: str, *, owner: str = "", with_image: bool = True) 
             period = tokens.pop(0)
         except MarketServiceError:
             pass
-    if len(tokens) < 2:
+    if not tokens and event is not None:
+        tokens = [item["code"] for item in await runtime.watchlist.list(_watch_key(event))][:13]
+    if not tokens:
         return CommandResult("用法：对比个股 贵州茅台 五粮液 沪深300")
-    data = await runtime.market.compare(tokens, period)
+    data = await runtime.market.compare(
+        tokens, period, start=start.date() if start else None, end=end.date() if end else None
+    )
     html, width, title = compare_series_html(data["series"])
     image = await _render(html, width) if with_image else None
     lines = [f"【{title}】{period}"]
@@ -167,6 +159,7 @@ async def compare_result(raw: str, *, owner: str = "", with_image: bool = True) 
         lines.append(
             f"{trace.get('name')}: {last:+.2f}%" if isinstance(last, (int, float)) else f"{trace.get('name')}: —"
         )
+    lines.extend(data["failures"])
     text = "\n".join(lines)
     artifact = create_html(title, html, kind="chart", owner=owner)
     return CommandResult(text, image, [artifact])
@@ -225,7 +218,16 @@ async def valuation_result(raw: str) -> CommandResult:
 
 
 async def rank_result(rank_by: str = "main_inflow") -> CommandResult:
-    data = await get_runtime().market.rank(rank_by, limit=10)
+    labels = {
+        "主力净流入": "main_inflow",
+        "主力净流出": "main_outflow",
+        "换手率": "turnover",
+        "成交额": "amount",
+        "成交量": "volume",
+        "净利增速": "profit_yoy",
+        "ROE": "roe",
+    }
+    data = await get_runtime().market.rank(labels.get(rank_by, rank_by.lower()), limit=10)
     rows = data.get("rows") or []
     lines = [f"【{data.get('rank_by_label') or rank_by}】"]
     for row in rows:
@@ -237,15 +239,17 @@ async def rank_result(rank_by: str = "main_inflow") -> CommandResult:
     return CommandResult("\n".join(lines))
 
 
-async def sector_result(kind: str, limit: int = 20) -> CommandResult:
-    data = await get_runtime().market.board(kind, limit=limit)
+async def sector_result(kind: str, limit: int = 20, *, falling: bool = False) -> CommandResult:
+    data = await get_runtime().market.board(kind, limit=limit, falling=falling)
     rows = data.get("rows") or []
     title = "行业板块" if kind == "industry" else "概念板块"
-    lines = [f"【{title}涨幅榜】"]
-    lines.extend(
-        f"{index}. {row.get('name')} {row.get('change_pct'):+.2f}% 领涨 {row.get('lead_name') or '—'}"
-        for index, row in enumerate(rows[:limit], 1)
-    )
+    direction = "领跌" if falling else "领涨"
+    member = "fall_name" if falling else "lead_name"
+    lines = [f"【{title}{direction}榜】"]
+    for index, row in enumerate(rows[:limit], 1):
+        pct = row["change_pct"]
+        change = f"{pct:+.2f}%" if pct is not None else "—"
+        lines.append(f"{index}. {row['name']} {change} {direction} {row[member] or '—'}")
     return CommandResult("\n".join(lines))
 
 
@@ -263,6 +267,7 @@ async def technical_result(raw: str) -> CommandResult:
         return CommandResult("用法：技术分析 600519 或 技术分析 周k 贵州茅台")
     data = await get_runtime().market.technical(query, period)
     symbol = data.get("symbol") or {}
+
     def number(key: str) -> str:
         value = (data.get("indicators") or {}).get(key)
         return f"{value:.3f}" if isinstance(value, (int, float)) else "—"
@@ -379,10 +384,27 @@ async def my_watch(ue: UnifiedEvent) -> CommandResult:
     items = await get_runtime().watchlist.list(_watch_key(ue))
     if not items:
         return CommandResult("您还未添加自选。发送“添加自选 600519”即可。")
-    lines = [f"【我的自选】共 {len(items)} 只"]
-    for index, item in enumerate(items, 1):
-        lines.append(f"{index}. {item.get('name')}({item.get('code')})")
-    return CommandResult("\n".join(lines))
+    from SayuStock.stock_info.watch_view import load_watch_view, watch_index_quotes
+
+    from .services.theme import themed_upstream_page
+    from .services.market import quote_dict
+
+    market = get_runtime().market.market
+    codes = [str(item["code"]) for item in items]
+    view = await load_watch_view(codes, market, await watch_index_quotes(market))
+    html = themed_upstream_page(view.html, "我的自选")
+    artifact = create_html("我的自选", html, kind="chart", owner=ue.user_id)
+    image = await _render(html, view.width) if ue.platform != "qweb" and not ue._extra.get("qweb") else None
+    return CommandResult(
+        view.text,
+        image,
+        [artifact],
+        structured={
+            "watchlist": items,
+            "quotes": [quote_dict(q) for q, _ in view.quotes],
+            "failures": [{"code": f.label, "reason": f.reason} for f in view.failures],
+        },
+    )
 
 
 async def clear_watch(ue: UnifiedEvent) -> CommandResult:
@@ -447,7 +469,7 @@ async def report_result(ue: UnifiedEvent, raw: str) -> CommandResult:
         owner=ue.user_id,
         meta={"session_id": ue.session_id},
     )
-    image = await _render(html, 960) if ue.platform != "qweb" else None
+    image = await _render(html, 960) if ue.platform != "qweb" and not ue._extra.get("qweb") else None
     text = f"【{symbol} 研究报告】技术评分 {technical.get('score'):+.3f}"
     if image is None and ue.platform != "qweb":
         text = markdown
@@ -456,9 +478,9 @@ async def report_result(ue: UnifiedEvent, raw: str) -> CommandResult:
 
 _COMMAND_ALIASES = {
     "help": ("股票帮助", "股票菜单"),
-    "overview": ("大盘概览", "大盘", "市场概览"),
+    "overview": ("大盘概览", "大盘概况", "大盘", "股票大盘", "市场概览"),
     "stock": ("个股", "行情", "查行情"),
-    "compare": ("对比个股", "个股对比"),
+    "compare": ("对比个股", "个股对比", "走势对比"),
     "sector": ("板块", "行业板块", "概念板块", "板块排行"),
     "technical": ("技术分析", "股票分析"),
     "screen": ("自动选股", "选股", "条件选股"),
@@ -466,10 +488,10 @@ _COMMAND_ALIASES = {
     "financial": ("财务", "财务分析", "基本面"),
     "valuation": ("估值", "估值分析"),
     "rank": ("资金排行", "排行榜", "榜单"),
-    "add": ("添加自选", "添加个股", "加入自选"),
-    "remove": ("删除自选", "删除个股", "移除自选"),
-    "mine": ("我的自选", "我的个股"),
-    "clear": ("清空自选",),
+    "add": ("添加自选", "添加个股", "加入自选", "添加股票", "添加持仓"),
+    "remove": ("删除自选", "删除个股", "移除自选", "删除股票", "删除持仓"),
+    "mine": ("我的自选", "我的持仓", "我的股票"),
+    "clear": ("清空自选", "清空我的自选"),
     "report": ("股票报告", "研报", "股票研报"),
 }
 
@@ -490,6 +512,10 @@ def split_command(text: str) -> tuple[str, str, str]:
 
 async def execute(text: str, ue: UnifiedEvent) -> CommandResult:
     """Execute a command or a natural-language alias."""
+    tokens = text.strip().lstrip("/").split(maxsplit=1)
+    feature = lookup(tokens[0]) if tokens else None
+    if feature is not None:
+        return await invoke(feature, tokens[1] if len(tokens) > 1 else "", ue)
     intent, arg, _ = split_command(text)
     if not intent:
         return CommandResult("未识别该指令。发送“股票帮助”查看用法；网页 AI 由 QWeb 宿主提供。")
@@ -500,10 +526,13 @@ async def execute(text: str, ue: UnifiedEvent) -> CommandResult:
     if intent == "stock":
         return await stock_result(arg, owner=ue.user_id, with_image=ue.platform != "qweb")
     if intent == "compare":
-        return await compare_result(arg, owner=ue.user_id, with_image=ue.platform != "qweb")
+        return await compare_result(arg, event=ue, owner=ue.user_id, with_image=ue.platform != "qweb")
     if intent == "sector":
+        if tokens[0] in {"行业板块", "概念板块"} and arg and arg not in {"涨幅", "跌幅", "领涨", "领跌"}:
+            name = "概念云图" if tokens[0] == "概念板块" else "板块云图"
+            return await invoke(catalog()[name], arg, ue)
         kind = "concept" if "概念" in text else "industry"
-        return await sector_result(kind)
+        return await sector_result(kind, falling="跌" in arg)
     if intent == "technical":
         return await technical_result(arg)
     if intent == "screen":

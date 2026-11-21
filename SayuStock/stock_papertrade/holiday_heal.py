@@ -976,6 +976,7 @@ async def heal_holiday_trades(*, dry_run: bool = False) -> HolidayHealResult:
         logger.warning(f"{_LOG} 休市表不可用（{source}）：不会删除任何流水，仅执行持仓对账")
 
     result = _empty_result(source, dry_run)
+    result["calendar_available"] = bool(closed)
     async with async_maker() as session:
         if not await _has_table(session, "sayupapertrade"):
             logger.warning(f"{_LOG} 库中没有 sayupapertrade 表，跳过")

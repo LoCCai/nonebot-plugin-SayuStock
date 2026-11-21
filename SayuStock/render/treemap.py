@@ -58,21 +58,21 @@ class TreemapPage:
     tiles: list[Tile]
 
 
-def _heat(change: float) -> str:
-    shade = _CLOUD_UP if change > 0 else _CLOUD_DOWN
-    return mix(shade, _CLOUD_NEUTRAL, min(abs(change) / 10, 1))
+def _heat(change: float, up: str = _CLOUD_UP, down: str = _CLOUD_DOWN, neutral: str = _CLOUD_NEUTRAL) -> str:
+    shade = up if change > 0 else down
+    return mix(shade, neutral, min(abs(change) / 10, 1))
 
 
 def _label_units(text: str) -> float:
     return sum(1.0 if ord(ch) > 127 else 0.62 for ch in text)
 
 
-def _group_color(leaves: list[CloudmapLeaf]) -> str:
+def _group_color(leaves: list[CloudmapLeaf], up: str = _CLOUD_UP, down: str = _CLOUD_DOWN) -> str:
     total = sum(leaf.value for leaf in leaves)
     if total <= 0:
         return _CLOUD_NEUTRAL
     weighted_change = sum(leaf.value * leaf.diff_val for leaf in leaves) / total
-    return mix(_heat(weighted_change), "#111315", 0.30)
+    return mix(_heat(weighted_change, up, down), "#111315", 0.30)
 
 
 def _fit_tile_font(w: float, h: float, name: str, change: str, unit: float) -> tuple[float, bool, bool]:
@@ -100,7 +100,15 @@ def _fit_tile_font(w: float, h: float, name: str, change: str, unit: float) -> t
 
 
 def prepare_treemap(
-    snap: BoardSnapshot, market: str, sector: str | None = None, layer: int = 2, *, width: int = 1200
+    snap: BoardSnapshot,
+    market: str,
+    sector: str | None = None,
+    layer: int = 2,
+    *,
+    width: int = 1200,
+    up: str = _CLOUD_UP,
+    down: str = _CLOUD_DOWN,
+    neutral: str = _CLOUD_NEUTRAL,
 ) -> TreemapPage | str:
     data = build_cloudmap_render_data(snap, market, sector, layer)
     if isinstance(data, str):
@@ -138,7 +146,9 @@ def prepare_treemap(
         header_font = min(
             11.5 * unit, max(min_header_font, min(header_h * 0.70, (bw * 0.90) / max(_label_units(category), 2.0)))
         )
-        groups.append(Group(gx, gy, bw, bh, category, _group_color(leaves), header_h, header_font, show_title))
+        groups.append(
+            Group(gx, gy, bw, bh, category, _group_color(leaves, up, down), header_h, header_font, show_title)
+        )
 
         inner_x = gx + tile_pad
         inner_y = gy + header_h + (1.0 * unit if show_title else tile_pad)
@@ -153,7 +163,9 @@ def prepare_treemap(
             name = f"{leaf.name} · {leaf.code}" if names[leaf.name] > 1 and leaf.code else leaf.name
             change = percent_text(leaf.diff_val)
             fit, show_text, show_change = _fit_tile_font(tw, th, name, change, unit)
-            tiles.append(Tile(lx, ly, tw, th, name, change, _heat(leaf.diff_val), fit, show_text, show_change))
+            tiles.append(
+                Tile(lx, ly, tw, th, name, change, _heat(leaf.diff_val, up, down, neutral), fit, show_text, show_change)
+            )
 
     layers = "完整成分" if data.layer == 1 else "行业代表成分"
     subtitle = f"{len(data.leaves)} 只标的 · {len(grouped)} 个行业 · {layers}"
@@ -183,8 +195,11 @@ async def render_treemap(
     *,
     width: int = 1200,
     scale: float = 1.5,
+    up: str = _CLOUD_UP,
+    down: str = _CLOUD_DOWN,
+    neutral: str = _CLOUD_NEUTRAL,
 ) -> str | bytes:
-    page = prepare_treemap(snap, market, sector, layer, width=width)
+    page = prepare_treemap(snap, market, sector, layer, width=width, up=up, down=down, neutral=neutral)
     if isinstance(page, str):
         return page
     return await render_html(treemap_html(page), width=page.width, scale=scale, label=page.title)

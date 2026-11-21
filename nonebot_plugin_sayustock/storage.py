@@ -216,16 +216,20 @@ async def async_connection_pool() -> Any:
 
 
 async def verify_postgres_storage() -> None:
-    """Validate connectivity and the two externally managed tables at startup."""
+    """Verify all externally managed stock tables before starting scheduled work."""
     pool = await async_connection_pool()
     try:
         async with pool.connection() as connection:
             await connection.execute(f"SELECT 1 FROM {WATCHLIST_TABLE} LIMIT 1")
             await connection.execute(f"SELECT 1 FROM {ARTIFACT_TABLE} LIMIT 1")
+            for name in ("news_subscription", "sayumacroevent", "sayupaperaccount", "sayupaperagentpool",
+                         "sayupaperbroadcasttarget", "sayupaperdecision", "sayupaperposition", "sayupapersnapshot",
+                         "sayupapertrade", "sayupaperwatchlist"):
+                await connection.execute(f"SELECT 1 FROM {SCHEMA}.{name} LIMIT 0")
     except Exception as error:
         log_postgres_failure("校验存储表", error)
         raise PostgresStorageError(
-            "PostgreSQL 存储表不可用；请确认 qiqi_sayustock.watchlist/artifact 已由运维创建"
+            "PostgreSQL 存储表不可用；请确认 qiqi_sayustock 库表迁移 001 至 003 已完成"
         ) from None
 
 

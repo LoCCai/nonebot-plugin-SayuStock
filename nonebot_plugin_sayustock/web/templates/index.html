@@ -13,7 +13,7 @@
   <div class="app-shell">
     <aside class="sidebar" aria-label="SayuStock 导航">
       <div class="brand">
-        <div class="logo" aria-hidden="true">早</div>
+        <div class="logo" aria-hidden="true">七</div>
         <div class="brand-copy">
           <h1>SayuStock</h1>
           <p>QWeb · 股票研究台</p>
@@ -46,10 +46,13 @@
           <span>图表与报告</span>
           <small>HTML / PNG 制品</small>
         </button>
+        <button class="nav-item" type="button" data-view="workbench">
+          <span class="nav-icon" aria-hidden="true">▥</span><span>研究与模拟盘</span>
+        </button>
         <button class="nav-item" type="button" data-view="help">
           <span class="nav-icon" aria-hidden="true">?</span>
           <span>命令与帮助</span>
-          <small>16 类指令</small>
+          <small>常用指令</small>
         </button>
       </nav>
 
@@ -88,7 +91,7 @@
             <div class="hero-stats" aria-label="市场宽度摘要">
               <div><b id="stat-up">—</b><span>上涨</span></div>
               <div><b id="stat-down">—</b><span>下跌</span></div>
-              <div><b id="stat-turnover">—</b><span>成交额</span></div>
+              <div><b id="stat-turnover">—</b><span>成交额 <small id="turnover-note"></small></span></div>
             </div>
           </div>
           <div class="index-grid" id="index-grid" aria-live="polite"></div>
@@ -105,10 +108,10 @@
         <div class="grid-2">
           <section class="panel">
             <div class="panel-head">
-              <h3>市场宽度</h3>
+              <h3>涨跌分布</h3>
               <span id="breadth-note">涨跌分布</span>
             </div>
-            <div class="breadth" id="breadth-bar" aria-hidden="true"></div>
+            <div class="band-scroll" id="breadth-bar" aria-label="涨跌幅分档"></div>
             <div class="legend" id="breadth-legend"></div>
             <div class="mini-stats">
               <div><b id="stat-flat">—</b><span>平盘</span></div>
@@ -116,23 +119,37 @@
               <div><b id="stat-limit-down">—</b><span>跌停</span></div>
               <div><b id="stat-north">—</b><span>北向净流入</span></div>
             </div>
+            <p id="overview-mood"></p><img id="market-mood-image" class="market-mood-image" alt="市场情绪" hidden><figure class="flow-figure"><figcaption>主力资金 · 东方财富</figcaption><img id="main-flow" alt="主力净流入" hidden><span id="main-flow-note">暂缺主力资金图</span></figure>
             <div class="warn-list" id="overview-warnings" hidden></div>
           </section>
 
           <section class="panel">
             <div class="panel-head">
               <h3>板块强弱</h3>
-              <span>行业 / 概念涨幅榜</span>
+              <span>行业与概念 · 各前 20</span>
             </div>
-            <div class="table-wrap">
+            <div class="board-switches" aria-label="板块榜单"><button type="button" class="ghost" data-board-tab="industry-table" id="tab-industry-table" aria-controls="industry-table-panel" aria-pressed="true">行业领涨</button><button type="button" class="ghost" data-board-tab="industry-fall" id="tab-industry-fall" aria-controls="industry-fall-panel" aria-pressed="false">行业领跌</button><button type="button" class="ghost" data-board-tab="concept-table" id="tab-concept-table" aria-controls="concept-table-panel" aria-pressed="false">概念领涨</button><button type="button" class="ghost" data-board-tab="concept-fall" id="tab-concept-fall" aria-controls="concept-fall-panel" aria-pressed="false">概念领跌</button></div>
+            <div class="table-wrap" id="industry-table-panel" aria-labelledby="tab-industry-table">
               <table class="data-table" id="industry-table">
                 <thead><tr><th>行业</th><th class="num">涨跌</th><th>领涨</th><th class="num">领涨涨幅</th></tr></thead>
                 <tbody></tbody>
               </table>
             </div>
-            <div class="table-wrap">
+            <div class="table-wrap" id="concept-table-panel" aria-labelledby="tab-concept-table" hidden>
               <table class="data-table" id="concept-table">
                 <thead><tr><th>概念</th><th class="num">涨跌</th><th>领涨</th><th class="num">领涨涨幅</th></tr></thead>
+                <tbody></tbody>
+              </table>
+            </div>
+            <div class="table-wrap" id="industry-fall-panel" aria-labelledby="tab-industry-fall" hidden>
+              <table class="data-table" id="industry-fall">
+                <thead><tr><th>行业</th><th class="num">涨跌</th><th>领跌</th><th class="num">领跌跌幅</th></tr></thead>
+                <tbody></tbody>
+              </table>
+            </div>
+            <div class="table-wrap" id="concept-fall-panel" aria-labelledby="tab-concept-fall" hidden>
+              <table class="data-table" id="concept-fall">
+                <thead><tr><th>概念</th><th class="num">涨跌</th><th>领跌</th><th class="num">领跌跌幅</th></tr></thead>
                 <tbody></tbody>
               </table>
             </div>
@@ -154,6 +171,7 @@
                 <option value="concept">概念板块</option>
               </select>
             </label>
+            <label>排序<select id="sector-order"><option value="rise">涨幅</option><option value="fall">跌幅</option></select></label>
             <button class="primary" type="submit">查询板块排行</button>
           </form>
           <div class="command-output" id="market-output" hidden></div>
@@ -472,11 +490,24 @@
         </section>
       </section>
 
+      <section class="view" id="view-workbench" aria-labelledby="view-title">
+        <div class="panel">
+          <form class="inline-form" id="feature-form">
+            <label>类别<select id="feature-category"></select></label>
+            <label>功能<select id="feature-command"></select></label>
+            <label>业务参数<input id="feature-argument" type="text" maxlength="2000" aria-describedby="feature-usage"></label>
+            <label>操作范围<select id="feature-group"><option value="">个人</option></select></label>
+            <button class="primary" type="submit" id="feature-submit" disabled>查询</button>
+          </form>
+          <p class="hint" id="feature-usage" aria-live="polite"></p>
+          <div id="feature-output" class="task-output" hidden aria-live="polite"></div>
+        </div>
+      </section>
       <section class="view" id="view-help" aria-labelledby="view-title">
         <div class="grid-2">
           <section class="panel">
             <div class="panel-head">
-              <div><h3>16 类命令意图</h3></div>
+              <div><h3>常用命令</h3></div>
 
             </div>
             <div class="table-wrap">
@@ -528,6 +559,11 @@
     </main>
   </div>
 
+  <dialog id="feature-confirm" aria-labelledby="feature-confirm-title">
+    <form method="dialog"><h3 id="feature-confirm-title">确认操作</h3><p id="feature-confirm-detail"></p>
+      <button class="ghost" value="cancel">取消</button><button class="primary" value="confirm">确认</button>
+    </form>
+  </dialog>
   <dialog id="watch-confirm" aria-labelledby="watch-confirm-title">
     <form method="dialog" class="panel">
       <h3 id="watch-confirm-title">清空全部自选股？</h3>

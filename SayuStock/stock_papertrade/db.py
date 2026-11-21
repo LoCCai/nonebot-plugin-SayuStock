@@ -706,7 +706,7 @@ class PaperTradeRepo:
         if side not in ("buy", "sell"):
             raise ValueError(f"side 非法: {side!r}（期望 buy 或 sell）")
 
-        acc_stmt = select(SayuPaperAccount).where(col(SayuPaperAccount.id) == account_id)
+        acc_stmt = select(SayuPaperAccount).where(col(SayuPaperAccount.id) == account_id).with_for_update()
         acc: Optional[SayuPaperAccount] = (await session.execute(acc_stmt)).scalars().first()
         if acc is None:
             raise RuntimeError(f"SayuPaperAccount 不存在 (account_id={account_id})；请先创建模拟盘")
@@ -722,6 +722,11 @@ class PaperTradeRepo:
         old_avg: float = existing.avg_cost if existing is not None else 0.0
         if side == "sell" and old_qty < qty:
             raise ValueError(f"持仓不足：{stock_code} 持仓 {old_qty} 股，卖出 {qty} 股；已拒绝落库")
+
+        if qty <= 0 or price <= 0 or amount <= 0 or fee < 0:
+            raise ValueError("成交金额、数量或费用无效")
+        if side == "buy" and amount + fee > acc.cash + 0.00001:
+            raise ValueError("账户可用现金不足")
 
         now = datetime.now()
         trade = SayuPaperTrade(

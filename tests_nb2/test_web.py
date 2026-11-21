@@ -90,6 +90,11 @@ def test_overview_quote_and_page(client):
     overview = client.get(f"{ROUTER_PREFIX}/api/overview", headers=headers())
     assert overview.status_code == 200
     assert overview.json()["data"]["indices"]
+    mood = client.get(overview.json()["mood_image"], headers=headers())
+    assert mood.status_code == 200 and mood.content.startswith(b"\x89PNG")
+    assert client.get(f"{ROUTER_PREFIX}/api/mood/12", headers=headers()).status_code == 404
+    assert overview.json()["breadth_svg"].count("data-band=") == 13
+    assert len(overview.json()["data"]["breadth"]["counts"]) == 13
     quote = client.get(f"{ROUTER_PREFIX}/api/quote?q=贵州茅台", headers=headers())
     assert quote.status_code == 200
     assert quote.json()["data"]["name"] == "贵州茅台"
@@ -272,10 +277,12 @@ def test_stock_js_has_command_parity_and_never_coerces_missing_numbers(client):
     assert script.status_code == 200
     assert "application/javascript" in script.headers["content-type"]
     source = script.text
+    assert 'api("/sector?"' in source
+    sector = client.get(f"{ROUTER_PREFIX}/api/sector?kind=concept&falling=true", headers=headers())
+    assert sector.status_code == 200
+    assert "fall_name" in sector.json()["data"]["rows"][0]
     for command in (
         "大盘概览",
-        "行业板块",
-        "概念板块",
         "自动选股",
         "资金排行",
         "股票资讯",
@@ -311,3 +318,23 @@ def test_qweb_theme_bridge_assets_are_served(client):
         assert name in source
     assert "--app-bg" in source
     assert "--ink" in source
+
+
+def test_group_web_and_chat_use_same_technical_report(client):
+    import asyncio
+
+    from nonebot_plugin_sayustock.features import invoke, lookup
+    from nonebot_plugin_sayustock.platform import UnifiedEvent
+    from nonebot_plugin_sayustock.qiqi_chat import call
+
+    event = UnifiedEvent(platform="onebot11", bot_id="10", user_id="20", group_id="30", text="")
+    group = asyncio.run(invoke(lookup("技术分析"), "600519", event))
+    reply = client.post(f"{ROUTER_PREFIX}/api/features/技术分析", headers=headers("20"), json={"argument": "600519"})
+    assert reply.status_code == 200
+    for tool, args in (("sayustock_research_feature", {"command": "技术分析", "argument": "600519"}),
+                       ("sayustock_technical_analysis", {"query": "600519"})):
+        _, data, _ = asyncio.run(call(tool, args, qq="20", thread="thread", is_admin=False, confirmed=False))
+        report = data.get("technical_report", data)
+        assert report["score"] == reply.json()["structured"]["score"] == group.structured["score"]
+        assert report["levels"] == group.structured["levels"]
+    assert client.post(f"{ROUTER_PREFIX}/api/features/模拟盘创建", headers=headers("20"), json={}).status_code == 409

@@ -1,6 +1,6 @@
 import random
 import asyncio
-from dataclasses import replace
+from dataclasses import replace, dataclass
 
 from gsuid_core.logger import logger
 from gsuid_core.ai_core.trigger_bridge import ai_return
@@ -122,7 +122,24 @@ def _index_queries() -> dict[str, str]:
     return out
 
 
-async def draw_future_img() -> str | bytes:
+@dataclass(frozen=True, slots=True)
+class AllWeatherView:
+    """全天候五分区行情及折线，供群图、QWeb 制品和结构化字段共用。"""
+
+    sections: tuple[tuple[str, tuple[DisplayItem, ...]], ...]
+    sparks: dict[str, str]
+    sources: tuple[str | None, ...]
+    warnings: tuple[str, ...] = ()
+
+
+def _safe_map(result: object) -> ItemMap:
+    if isinstance(result, BaseException) or not isinstance(result, dict):
+        return {}
+    return {key: value for key, value in result.items() if isinstance(key, str) and isinstance(value, DisplayItem)}
+
+
+async def load_all_weather() -> AllWeatherView | str:
+    """抓取全天候行情；全部为空时返回明确错误，不伪造数据。"""
     market = get_market()
     intl = await market.board("国际市场", limit=100, sort_asc=False)
     sparks: SparkMap = {}
@@ -147,23 +164,14 @@ async def draw_future_img() -> str | bytes:
         return_exceptions=True,
     )
 
-    def safe_map(result: object) -> ItemMap:
-        if isinstance(result, BaseException) or not isinstance(result, dict):
-            return {}
-        out: ItemMap = {}
-        for key, value in result.items():
-            if isinstance(key, str) and isinstance(value, DisplayItem):
-                out[key] = value
-        return out
-
     if is_market_error(intl):
-        data_gz = list(safe_map(results[4]).values())
+        data_gz = list(_safe_map(results[4]).values())
     else:
         data_gz = board_rows_to_items(intl.rows)
-    data2 = safe_map(results[0])
-    data3 = safe_map(results[1])
-    data4 = safe_map(results[2])
-    data5 = safe_map(results[3])
+    data2 = _safe_map(results[0])
+    data3 = _safe_map(results[1])
+    data4 = _safe_map(results[2])
+    data5 = _safe_map(results[3])
 
     sections: list[tuple[str, list[DisplayItem]]] = [
         ("国际市场", pick_display_items(data_gz, i_code)),
@@ -175,8 +183,38 @@ async def draw_future_img() -> str | bytes:
     visible = [(title, items) for title, items in sections if items]
     if not visible:
         return board_message or "全天候没有可展示的行情"
-    _ai_return_all_weather(data_gz, data2, data3, data4, data5)
-    html = build_all_weather_html(visible, sparklines=sparks, sources=tuple(extra_sources))
+    warnings = [board_message] if board_message else []
+    return AllWeatherView(
+        sections=tuple((title, tuple(items)) for title, items in visible),
+        sparks=sparks,
+        sources=tuple(extra_sources),
+        warnings=tuple(warnings),
+    )
+
+
+def all_weather_html(view: AllWeatherView) -> str:
+    return build_all_weather_html(
+        [(title, list(items)) for title, items in view.sections],
+        sparklines=view.sparks,
+        sources=view.sources,
+    )
+
+
+def all_weather_text(view: AllWeatherView) -> str:
+    lines = ["【全天候板块】"]
+    for title, items in view.sections:
+        lines.append(f"\n【{title}】")
+        lines.extend(f"  {item.name}: {item.price} ({item.change_pct}%)" for item in items)
+    lines.extend(f"⚠ {warning}" for warning in view.warnings)
+    return "\n".join(lines)
+
+
+async def draw_future_img() -> str | bytes:
+    view = await load_all_weather()
+    if isinstance(view, str):
+        return view
+    ai_return(all_weather_text(view))
+    html = all_weather_html(view)
     try:
         return await render_html(html, width=CSS_WIDTH, label="全天候")
     except RenderError as e:

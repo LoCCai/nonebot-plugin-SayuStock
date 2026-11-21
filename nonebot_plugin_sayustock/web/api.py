@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import re
 import time
+import base64
 from typing import Any
+from pathlib import Path
 
 from fastapi import Body, Query, Depends, Request, APIRouter, HTTPException
 from fastapi.responses import Response, FileResponse, HTMLResponse, RedirectResponse
@@ -29,6 +31,7 @@ from ..runtime import get_runtime
 from ..storage import storage_mode
 from ..ai.tools import TOOLS, run_tool
 from ..commands import execute
+from ..features import invoke, lookup, catalog, web_event
 from ..platform import UnifiedEvent
 from ..artifacts import Artifact, get_artifact, list_artifacts
 from ..ai.contracts import ToolContext
@@ -42,6 +45,7 @@ from ..services.charts import (
     build_intraday_html,
     build_multi_intraday_html,
 )
+from ..services.overview import breadth_svg, market_mood, sources_text
 
 ROUTER_PREFIX = "/qweb/sayustock"
 
@@ -186,13 +190,30 @@ def _build_router(host: HostDependencies, prefix: str = ROUTER_PREFIX) -> APIRou
             },
         }
 
+    @router.get(f"{prefix}/api/mood/{{number}}")
+    async def mood_image(number: int, _account: WebAccount = Depends(member)) -> Any:
+        if not 1 <= number <= 11:
+            raise HTTPException(404, "未知情绪图")
+        from SayuStock.render import card_widgets
+
+        path = Path(card_widgets.__file__).resolve().parents[1] / "stock_info" / "texture2d" / f"title{number}.png"
+        return FileResponse(path, media_type="image/png", headers={"Cache-Control": "private, max-age=86400"})
+
     @router.get(f"{prefix}/api/overview")
     async def overview(request: Request, chart: bool = Query(False), _account: WebAccount = Depends(member)) -> Any:
         try:
-            data = await get_runtime().market.overview()
+            data = await get_runtime().market.overview(include_flow=True)
         except Exception as error:
             raise HTTPException(status_code=502, detail=str(error)) from error
-        payload: dict[str, Any] = {"ok": True, "data": data}
+        mood_label, number = market_mood(data)
+        payload: dict[str, Any] = {
+            "ok": True,
+            "data": data,
+            "breadth_svg": breadth_svg(data["breadth"]),
+            "mood": mood_label,
+            "mood_image": f"{_mount_path(request, prefix)}/api/mood/{number}" if number else None,
+            "sources": sources_text(data),
+        }
         if chart:
             html = overview_html(data)
             payload["html"] = html
@@ -228,11 +249,12 @@ def _build_router(host: HostDependencies, prefix: str = ROUTER_PREFIX) -> APIRou
     async def sector(
         request: Request,
         kind: str = Query("industry"),
+        falling: bool = False,
         _account: WebAccount = Depends(member),
     ) -> Any:
         normalized = "concept" if kind in {"concept", "概念"} else "industry"
         try:
-            data = await get_runtime().market.board(normalized, limit=30)
+            data = await get_runtime().market.board(normalized, limit=30, falling=falling)
         except Exception as error:
             raise HTTPException(status_code=502, detail=str(error)) from error
         return {"ok": True, "data": data}
@@ -259,12 +281,14 @@ def _build_router(host: HostDependencies, prefix: str = ROUTER_PREFIX) -> APIRou
         try:
             kind = type.lower()
             if kind == "overview":
-                data = await runtime.market.overview()
+                data = await runtime.market.overview(include_flow=True)
                 html, width, title = overview_html(data, context=context), 1280, "A股大盘概览"
             elif kind == "intraday":
                 queries = q.replace("，", " ").split()
                 if len(queries) > 1:
-                    html, width, title = await build_multi_intraday_html(runtime.market, queries, ndays, context=context)
+                    html, width, title = await build_multi_intraday_html(
+                        runtime.market, queries, ndays, context=context
+                    )
                 else:
                     html, width, title = await build_intraday_html(runtime.market, q, ndays, context=context)
             elif kind == "compare":
@@ -297,7 +321,7 @@ def _build_router(host: HostDependencies, prefix: str = ROUTER_PREFIX) -> APIRou
         try:
             kind = type.lower()
             if kind == "overview":
-                data = await runtime.market.overview()
+                data = await runtime.market.overview(include_flow=True)
                 html, width = overview_html(data), 1280
             elif kind == "intraday":
                 queries = q.replace("，", " ").split()
@@ -348,6 +372,69 @@ def _build_router(host: HostDependencies, prefix: str = ROUTER_PREFIX) -> APIRou
         removed = await get_runtime().watchlist.remove(_watch_key(account), code)
         return {"ok": True, "removed": removed}
 
+    def feature_result(request, result):
+        return {
+            "ok": True,
+            "text": result.text,
+            "structured": result.structured,
+            "image": (
+                "data:image/png;base64," + base64.b64encode(result.image).decode("ascii") if result.image else None
+            ),
+            "artifacts": [_artifact_payload(request, item, prefix) for item in result.artifacts],
+        }
+
+    @router.get(f"{prefix}/api/features")
+    async def features(_account: WebAccount = Depends(member)) -> Any:
+        return {
+            "items": [
+                {
+                    "command": f.command,
+                    "category": f.category,
+                    "usage": f.usage,
+                    "writes": f.writes,
+                    "aliases": f.aliases,
+                }
+                for f in catalog().values()
+            ]
+        }
+
+    @router.get(f"{prefix}/api/features/groups")
+    async def feature_groups(account: WebAccount = Depends(member)) -> Any:
+        from types import SimpleNamespace
+
+        from src.qi_web.services.chat_actions import account_groups
+
+        return {"items": await account_groups(SimpleNamespace(qq=int(account.qq)))}
+
+    async def perform_feature(request, feature, argument, body, account):
+        if not isinstance(argument, str) or len(argument) > 2000:
+            raise HTTPException(422, "功能参数无效")
+        if feature.writes and body.get("confirmed") is not True:
+            raise HTTPException(409, "请确认要执行的操作")
+        try:
+            event = await web_event(
+                account.qq, f"{feature.command} {argument}".rstrip(), str(body.get("group_id") or "")
+            )
+            result = await invoke(feature, argument, event)
+        except PermissionError as error:
+            raise HTTPException(403, str(error)) from error
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+        return feature_result(request, result)
+
+    @router.post(f"{prefix}/api/features/{{name}}")
+    async def feature_action(
+        request: Request,
+        name: str,
+        body: dict[str, Any] = Body(...),
+        account: WebAccount = Depends(member),
+        _csrf: None = Depends(csrf_guard),
+    ) -> Any:
+        feature = catalog().get(name)
+        if not feature:
+            raise HTTPException(404, "未知股票功能")
+        return await perform_feature(request, feature, body.get("argument", ""), body, account)
+
     @router.post(f"{prefix}/api/command")
     async def command(
         request: Request,
@@ -358,6 +445,10 @@ def _build_router(host: HostDependencies, prefix: str = ROUTER_PREFIX) -> APIRou
         text = str(body.get("text") or "").strip()
         if not text:
             raise HTTPException(status_code=400, detail="缺少 text")
+        words = text.lstrip("/").split(maxsplit=1)
+        feature = lookup(words[0]) if words else None
+        if feature:
+            return await perform_feature(request, feature, words[1] if len(words) > 1 else "", body, account)
         ue = UnifiedEvent(
             platform="qweb",
             bot_id="qweb",
@@ -370,16 +461,7 @@ def _build_router(host: HostDependencies, prefix: str = ROUTER_PREFIX) -> APIRou
             result = await execute(text, ue)
         except Exception as error:
             raise HTTPException(status_code=502, detail=str(error)) from error
-        return {
-            "ok": True,
-            "text": result.text,
-            "image": (
-                "data:image/png;base64," + __import__("base64").b64encode(result.image).decode("ascii")
-                if result.image
-                else None
-            ),
-            "artifacts": [_artifact_payload(request, item, prefix) for item in result.artifacts],
-        }
+        return feature_result(request, result)
 
     @router.get(f"{prefix}/api/artifacts")
     async def artifacts(account: WebAccount = Depends(member)) -> Any:

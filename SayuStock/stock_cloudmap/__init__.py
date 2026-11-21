@@ -1,90 +1,19 @@
-import datetime
-from datetime import timedelta
+"""Market / industry / concept cloud maps.
 
-from gsuid_core.sv import SV
-from gsuid_core.aps import scheduler
-from gsuid_core.bot import Bot
-from gsuid_core.logger import logger
-from gsuid_core.models import Event
+Rendering and data services are safe to import standalone; the original GsCore
+SV registration is isolated in ``_gscore_commands``.
+"""
 
-from .get_cloudmap import render_image
-from ..utils.resource_path import DATA_PATH
-from ..utils.sector_resolve import INDUSTRY_MEMBER_CACHE_MINUTES
-from ..stock_config.stock_config import STOCK_CONFIG
-
-sv_stock_cloudmap = SV("大盘云图")
+from __future__ import annotations
 
 
-# 每日零点二十清理过期缓存数据，避免每天全量清空影响长周期缓存。
-@scheduler.scheduled_job("cron", hour=0, minute=20)
-async def delete_all_data() -> None:
-    retention_days = int(STOCK_CONFIG.get_config("stock_cache_retention_days").data)
-    expired_before = datetime.datetime.now() - timedelta(days=retention_days)
-    logger.info(f"[SayuStock] 开始执行[清理{retention_days}天前缓存数据]")
-    member_expired_before = datetime.datetime.now() - timedelta(minutes=INDUSTRY_MEMBER_CACHE_MINUTES)
-    for cache_file in DATA_PATH.iterdir():
-        if not cache_file.is_file():
-            continue
-        file_mod_time = datetime.datetime.fromtimestamp(cache_file.stat().st_mtime)
-        # 行业成分名单单独按 30 天过期，避免被通用 7 天清理误删
-        if cache_file.name.startswith("industry-members_"):
-            if file_mod_time < member_expired_before:
-                cache_file.unlink()
-            continue
-        if file_mod_time < expired_before:
-            cache_file.unlink()
-
-    logger.success("[SayuStock] [清理过期缓存数据] 执行完成！")
+def _gscore_available() -> bool:
+    try:
+        from gsuid_core.sv import SV  # noqa: F401
+    except ImportError:
+        return False
+    return True
 
 
-@sv_stock_cloudmap.on_command(
-    ("大盘云图"),
-    to_ai="""查看A股大盘行业板块涨跌分布云图
-
-    当用户询问大盘行情、今日市场整体表现、行业板块涨跌分布、大盘热力图、
-    "帮我看看大盘"、"今天市场怎么样"、"行业板块涨跌"时调用。
-
-    Args:
-        text: 可选的板块筛选条件，留空显示全部行业板块的大盘云图。
-              例如 "" 或 "医药" 或 "科技"
-    """,
-)
-async def send_cloudmap_img(bot: Bot, ev: Event) -> None:
-    logger.info("开始执行[大盘云图]")
-    im = await render_image("大盘云图", ev.text.strip())
-    await bot.send(im)
-
-
-@sv_stock_cloudmap.on_command(
-    ("板块云图", "行业云图", "行业板块"),
-    to_ai="""查看行业板块涨跌分布云图
-
-    当用户询问某个行业板块行情、行业板块云图、"帮我看看半导体板块"、
-    "新能源板块怎么样"、"行业板块涨跌"时调用。
-
-    Args:
-        text: 申万一级/二级/三级行业名，例如 "建筑材料"、"水泥"、"水泥制造"
-    """,
-)
-async def send_typemap_img(bot: Bot, ev: Event) -> None:
-    logger.info("开始执行[板块云图]")
-    im = await render_image("行业云图", ev.text.strip())
-    await bot.send(im)
-
-
-@sv_stock_cloudmap.on_command(
-    ("概念云图", "概念板块云图", "概念板块"),
-    to_ai="""查看概念板块涨跌分布云图
-
-    当用户询问某个概念板块行情、概念板块云图、"帮我看看人工智能概念"、
-    "华为欧拉概念怎么样"、"概念板块涨跌"时调用。
-    注意：不指定概念名称时会提示需要后跟概念类型。
-
-    Args:
-        text: 概念板块名称，例如 "华为欧拉"、"人工智能"、"机器人"、"芯片"
-    """,
-)
-async def send_gn_img(bot: Bot, ev: Event) -> None:
-    logger.info("开始执行[概念云图]")
-    im = await render_image("概念云图", ev.text.strip())
-    await bot.send(im)
+if _gscore_available():
+    from . import _gscore_commands  # noqa: F401

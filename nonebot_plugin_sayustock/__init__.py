@@ -12,7 +12,7 @@ from typing import Any
 
 from nonebot import require, get_driver, on_command
 from nonebot.log import logger
-from nonebot.params import CommandArg
+from nonebot.params import Command, CommandArg
 from nonebot.plugin import PluginMetadata
 from nonebot.adapters import Bot, Event
 
@@ -23,23 +23,18 @@ from .commands import (
     CommandResult,
     deliver,
     execute,
-    my_watch,
     add_watch,
     clear_watch,
     help_result,
     news_result,
     rank_result,
     remove_watch,
-    stock_result,
     report_result,
-    screen_result,
-    sector_result,
-    compare_result,
     overview_result,
     financial_result,
-    technical_result,
     valuation_result,
 )
+from .features import invoke, lookup, catalog
 from .platform import from_event
 
 # Host QWeb chat wiring is owned by the main controller; this flag advertises
@@ -127,7 +122,7 @@ async def _help(bot: Bot, event: Event) -> None:
     await _guard(bot, event, help_result())
 
 
-overview_matcher = on_command("大盘概览", aliases={"大盘", "市场概览", "股票大盘"}, priority=5, block=True)
+overview_matcher = on_command("大盘概览", aliases={"大盘", "大盘概况", "市场概览", "股票大盘"}, priority=5, block=True)
 
 
 @overview_matcher.handle()
@@ -135,48 +130,16 @@ async def _overview(bot: Bot, event: Event) -> None:
     await _guard(bot, event, overview_result(owner=from_event(bot, event).user_id))
 
 
-stock_matcher = on_command("个股", aliases={"行情", "查行情"}, priority=5, block=True)
-
-
-@stock_matcher.handle()
-async def _stock(bot: Bot, event: Event, args: Any = CommandArg()) -> None:
-    await _guard(bot, event, stock_result(_arg_text(args), owner=from_event(bot, event).user_id))
-
-
-compare_matcher = on_command("对比个股", aliases={"个股对比", "走势对比"}, priority=5, block=True)
-
-
-@compare_matcher.handle()
-async def _compare(bot: Bot, event: Event, args: Any = CommandArg()) -> None:
-    await _guard(bot, event, compare_result(_arg_text(args), owner=from_event(bot, event).user_id))
-
-
 sector_matcher = on_command("行业板块", aliases={"板块", "概念板块", "板块排行"}, priority=5, block=True)
 
 
 @sector_matcher.handle()
-async def _sector(bot: Bot, event: Event) -> None:
-    kind = "concept" if "概念" in event.get_plaintext() else "industry"
-    await _guard(bot, event, sector_result(kind))
+async def _sector(bot: Bot, event: Event, command: tuple[str, ...] = Command(), args: Any = CommandArg()) -> None:
+    text = f"{command[-1]} {_arg_text(args)}"
+    await _guard(bot, event, execute(text, from_event(bot, event)))
 
 
-technical_matcher = on_command("技术分析", aliases={"股票分析"}, priority=5, block=True)
-
-
-@technical_matcher.handle()
-async def _technical(bot: Bot, event: Event, args: Any = CommandArg()) -> None:
-    await _guard(bot, event, technical_result(_arg_text(args)))
-
-
-screen_matcher = on_command("自动选股", aliases={"选股", "条件选股"}, priority=5, block=True)
-
-
-@screen_matcher.handle()
-async def _screen(bot: Bot, event: Event, args: Any = CommandArg()) -> None:
-    await _guard(bot, event, screen_result(_arg_text(args)))
-
-
-add_matcher = on_command("添加自选", aliases={"添加个股", "加入自选", "添加股票"}, priority=5, block=True)
+add_matcher = on_command("添加自选", aliases={"添加个股", "加入自选", "添加股票", "添加持仓"}, priority=5, block=True)
 
 
 @add_matcher.handle()
@@ -184,7 +147,9 @@ async def _add(bot: Bot, event: Event, args: Any = CommandArg()) -> None:
     await _guard(bot, event, add_watch(from_event(bot, event), _arg_text(args)))
 
 
-remove_matcher = on_command("删除自选", aliases={"删除个股", "移除自选", "删除股票"}, priority=5, block=True)
+remove_matcher = on_command(
+    "删除自选", aliases={"删除个股", "移除自选", "删除股票", "删除持仓"}, priority=5, block=True
+)
 
 
 @remove_matcher.handle()
@@ -192,15 +157,7 @@ async def _remove(bot: Bot, event: Event, args: Any = CommandArg()) -> None:
     await _guard(bot, event, remove_watch(from_event(bot, event), _arg_text(args)))
 
 
-mine_matcher = on_command("我的自选", aliases={"我的个股"}, priority=5, block=True)
-
-
-@mine_matcher.handle()
-async def _mine(bot: Bot, event: Event) -> None:
-    await _guard(bot, event, my_watch(from_event(bot, event)))
-
-
-clear_matcher = on_command("清空自选", priority=5, block=True)
+clear_matcher = on_command("清空自选", aliases={"清空我的自选"}, priority=5, block=True)
 
 
 @clear_matcher.handle()
@@ -244,8 +201,8 @@ rank_matcher = on_command("资金排行", aliases={"排行榜", "榜单"}, prior
 
 
 @rank_matcher.handle()
-async def _rank(bot: Bot, event: Event) -> None:
-    await _guard(bot, event, rank_result("main_inflow"))
+async def _rank(bot: Bot, event: Event, args: Any = CommandArg()) -> None:
+    await _guard(bot, event, rank_result(_arg_text(args) or "main_inflow"))
 
 
 dispatcher = on_command("股票", priority=5, block=True)
@@ -261,6 +218,21 @@ async def _dispatch(bot: Bot, event: Event, args: Any = CommandArg()) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Resolve group aliases using the same catalogue as the web page and AI tools.
+async def _feature_handler(
+    bot: Bot, event: Event, command: tuple[str, ...] = Command(), args: Any = CommandArg()
+) -> None:
+    feature = lookup(command[-1])
+    if feature is None:
+        return
+    await _guard(bot, event, invoke(feature, _arg_text(args), from_event(bot, event)))
+
+
+for _feature in catalog().values():
+    _matcher = on_command(_feature.command, aliases=set(_feature.aliases), priority=4, block=True)
+    _matcher.append_handler(_feature_handler)
+
+
 # Lifecycle
 # ---------------------------------------------------------------------------
 driver = get_driver()
@@ -270,6 +242,11 @@ driver = get_driver()
 async def _sayustock_startup() -> None:
     runtime = get_runtime()
     await runtime.startup()
+    from .services.newswork import start_pushes
+    from .services.paperwork import on_startup
+
+    await start_pushes()
+    await on_startup()
     logger.info("[SayuStock] NoneBot2 runtime ready")
 
     if bool(get_value("web.enabled", True)):
@@ -295,6 +272,11 @@ async def _sayustock_startup() -> None:
 
 @driver.on_shutdown
 async def _sayustock_shutdown() -> None:
+    from .services.newswork import stop_pushes
+    from .services.paperwork import on_shutdown
+
+    await on_shutdown()
+    await stop_pushes()
     try:
         from .ai import moellm_bridge
 

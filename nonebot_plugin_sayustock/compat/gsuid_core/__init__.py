@@ -5,9 +5,10 @@ single source of market, indicator and rendering truth.  Those modules import a
 few framework helpers at module import time (most notably ``logger``); this
 shim supplies only the pieces required to run them outside GsCore.
 
-It intentionally does **not** provide ``gsuid_core.sv`` / ``gsuid_core.bot`` so
-that ``SayuStock/__init__.py`` does not boot the GsCore plugin registration
-path when this branch is active.
+It intentionally does **not** provide ``gsuid_core.sv`` so that
+``SayuStock/__init__.py`` does not boot the GsCore plugin registration path when
+this branch is active.  ``gsuid_core.bot`` is a type-only placeholder used by the
+reused chart modules.
 """
 
 from __future__ import annotations

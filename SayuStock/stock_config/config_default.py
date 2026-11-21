@@ -163,10 +163,10 @@ CONFIG_DEFAULT: Dict[str, GSC] = {
     ),
     "kronos_tokenizer": GsStrConfig(
         "AI预测Tokenizer",
-        "Kronos分词器。Kronos-Tokenizer-base=默认，512上下文，官方搭配small/base模型；"
-        "Kronos-Tokenizer-2k=2048上下文，官方搭配Kronos-mini。"
+        "Kronos分词器。Kronos-Tokenizer-base=512上下文，官方搭配small/base模型；"
+        "Kronos-Tokenizer-2k=默认，2048上下文，官方搭配Kronos-mini。"
         "⚠️ 切换前请先确认与所选模型匹配，并确认服务器配置足以流畅运行",
-        "NeoQuasar/Kronos-Tokenizer-base",
+        "NeoQuasar/Kronos-Tokenizer-2k",
         options=["NeoQuasar/Kronos-Tokenizer-base", "NeoQuasar/Kronos-Tokenizer-2k"],
     ),
     "kronos_model": GsStrConfig(

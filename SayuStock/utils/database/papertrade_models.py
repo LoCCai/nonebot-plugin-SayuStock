@@ -14,7 +14,7 @@ from typing import Optional
 from datetime import date, datetime
 
 from sqlmodel import Field
-from sqlalchemy import UniqueConstraint
+from sqlalchemy import DateTime, UniqueConstraint
 
 from gsuid_core.webconsole.mount_app import PageSchema, GsAdminModel, site
 from gsuid_core.utils.database.startup import exec_list
@@ -61,9 +61,9 @@ class SayuPaperAccount(BaseIDModel, table=True):
     initialized_by: Optional[str] = Field(default=None, title="初始化人 user_id")
     # 多账户迁移幂等标记：1 = 本行已跑过 v2 迁移，重启不再改名（用户改过的名字要保住）
     schema_migrated_v2: int = Field(default=0, title="多账户迁移标记 0/1")
-    created_at: Optional[datetime] = Field(default=None, title="创建时间")
-    started_at: Optional[datetime] = Field(default=None, title="首次交易时间")
-    last_decided_at: Optional[datetime] = Field(default=None, title="上次决策时间")
+    created_at: Optional[datetime] = Field(sa_type=DateTime, default=None, title="创建时间")
+    started_at: Optional[datetime] = Field(sa_type=DateTime, default=None, title="首次交易时间")
+    last_decided_at: Optional[datetime] = Field(sa_type=DateTime, default=None, title="上次决策时间")
 
 
 # ============================================================
@@ -88,15 +88,15 @@ class SayuPaperPosition(BaseIDModel, table=True):
     # - 老库通过文件末尾 ``exec_list`` 的 ALTER TABLE 加列（trans_adapter 兜底）
     # - 旧数据全为 None；首次刷新前用 ``avg_cost`` 兜底显示（``quote_source='cost'``）
     last_quote_price: Optional[float] = Field(default=None, title="最新报价缓存")
-    last_quote_at: Optional[datetime] = Field(default=None, title="报价时间戳")
-    opened_at: Optional[datetime] = Field(default=None, title="首次建仓时间")
-    updated_at: Optional[datetime] = Field(default=None, title="更新时间")
+    last_quote_at: Optional[datetime] = Field(sa_type=DateTime, default=None, title="报价时间戳")
+    opened_at: Optional[datetime] = Field(sa_type=DateTime, default=None, title="首次建仓时间")
+    updated_at: Optional[datetime] = Field(sa_type=DateTime, default=None, title="更新时间")
     # 持仓入场计划（结构化止损/止盈），随成交原子写入持仓
     plan_stop_price: Optional[float] = Field(default=None, title="计划止损价")
     plan_stop_pct: Optional[float] = Field(default=None, title="计划止损幅度（负小数）")
     plan_take_price: Optional[float] = Field(default=None, title="计划止盈价")
     plan_thesis: Optional[str] = Field(default=None, title="入场逻辑描述")
-    plan_updated_at: Optional[datetime] = Field(default=None, title="计划上次修订时间")
+    plan_updated_at: Optional[datetime] = Field(sa_type=DateTime, default=None, title="计划上次修订时间")
     plan_rev_count: int = Field(default=0, title="计划累计修订次数")
 
 
@@ -122,8 +122,8 @@ class SayuPaperTrade(BaseIDModel, table=True):
     realized_pnl: float = Field(default=0.0, title="已实现盈亏（仅 sell）")
     reason: str = Field(default="", title="AI 决策理由")
     snapshot: str = Field(default="", title="决策时指标快照 JSON")
-    decided_at: datetime = Field(default_factory=datetime.now, title="决策时间", index=True)
-    executed_at: datetime = Field(default_factory=datetime.now, title="成交时间")
+    decided_at: datetime = Field(sa_type=DateTime, default_factory=datetime.now, title="决策时间", index=True)
+    executed_at: datetime = Field(sa_type=DateTime, default_factory=datetime.now, title="成交时间")
     decision_id: Optional[int] = Field(default=None, title="关联决策日志 ID")
     mode: str = Field(default="balanced", title="下单时风控模式")
 
@@ -147,7 +147,7 @@ class SayuPaperDecision(BaseIDModel, table=True):
     indicators: str = Field(default="", title="指标快照 JSON")
     trade_id: Optional[int] = Field(default=None, title="实际执行则关联 Trade.id")
     blocked_by: str = Field(default="", title="风控拦截原因")
-    created_at: datetime = Field(default_factory=datetime.now, title="决策时间", index=True)
+    created_at: datetime = Field(sa_type=DateTime, default_factory=datetime.now, title="决策时间", index=True)
 
 
 # ============================================================
@@ -169,7 +169,7 @@ class SayuPaperSnapshot(BaseIDModel, table=True):
     day_pnl_pct: float = Field(default=0.0, title="当日收益率 %")
     total_pnl: float = Field(default=0.0, title="累计盈亏（相对 initial_cash）")
     total_pnl_pct: float = Field(default=0.0, title="累计收益率 %")
-    created_at: datetime = Field(default_factory=datetime.now, title="写入时间")
+    created_at: datetime = Field(sa_type=DateTime, default_factory=datetime.now, title="写入时间")
 
 
 # ============================================================
@@ -193,7 +193,7 @@ class SayuPaperWatchlist(BaseIDModel, table=True):
     stock_name: str = Field(default="", title="名称")
     secid: str = Field(default="", title="东财 secid")
     note: str = Field(default="", title="备注")
-    created_at: datetime = Field(default_factory=datetime.now, title="添加时间")
+    created_at: datetime = Field(sa_type=DateTime, default_factory=datetime.now, title="添加时间")
 
 
 # ============================================================
@@ -213,8 +213,8 @@ class SayuPaperAgentPool(BaseIDModel, table=True):
     reason: str = Field(default="", title="加入池的原因")
     added_by: str = Field(default="ai", title="ai / user")
     priority: int = Field(default=0, title="优先级 0~10")
-    expires_at: Optional[datetime] = Field(default=None, title="过期时间")
-    created_at: datetime = Field(default_factory=datetime.now, title="加入时间")
+    expires_at: Optional[datetime] = Field(sa_type=DateTime, default=None, title="过期时间")
+    created_at: datetime = Field(sa_type=DateTime, default_factory=datetime.now, title="加入时间")
 
 
 # ============================================================
@@ -251,7 +251,7 @@ class SayuPaperBroadcastTarget(BaseIDModel, table=True):
     group_id: str = Field(default="", title="目标群号", index=True)
     enabled: int = Field(default=1, title="开关 0/1", index=True)
     created_by: Optional[str] = Field(default=None, title="添加者 user_id")
-    created_at: datetime = Field(default_factory=datetime.now, title="添加时间")
+    created_at: datetime = Field(sa_type=DateTime, default_factory=datetime.now, title="添加时间")
 
 
 # ============================================================

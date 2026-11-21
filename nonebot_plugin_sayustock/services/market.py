@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import time
+import base64
 import asyncio
 from typing import Any
 from datetime import date, datetime
+from zoneinfo import ZoneInfo
 from dataclasses import asdict, is_dataclass
 
 from nonebot.log import logger
@@ -15,15 +17,17 @@ from ..compat import bootstrap
 bootstrap.install()
 
 from SayuStock.utils.market import (  # noqa: E402
-    BREADTH_BANDS,
-    BREADTH_DIRECTION,
     Quote,
     RankBy,
     IpoMarket,
     ValueKind,
     KlinePeriod,
     BoardSnapshot,
+    MarketTurnover,
+    NorthboundFlow,
     get_market,
+    breadth_counts,
+    breadth_up_down,
     is_market_error,
 )
 from SayuStock.utils.sparkline import sparkline_from_series  # noqa: E402
@@ -33,6 +37,7 @@ from SayuStock.utils.market.models import (  # noqa: E402
     KlineSeries,
     IntradaySeries,
 )
+from SayuStock.utils.market.display import source_label  # noqa: E402
 
 INDEX_SPECS: tuple[tuple[str, str], ...] = (
     ("上证指数", "1.000001"),
@@ -43,6 +48,10 @@ INDEX_SPECS: tuple[tuple[str, str], ...] = (
     ("科创50", "1.000688"),
     ("中证1000", "1.000852"),
     ("中证A500", "1.000510"),
+    ("中证全指", "1.000985"),
+    ("科创综指", "1.000680"),
+    ("中证2000", "2.932000"),
+    ("北证50", "0.899050"),
 )
 OPTIONAL_INDEX_SPECS: tuple[tuple[str, str], ...] = (
     ("黄金9999", "118.AU9999"),
@@ -273,7 +282,20 @@ class MarketService:
         data = await self.kline(query, period)
         indicators = data["indicators"]
         score, signals, risks = self._score(indicators)
+        # Compute the original 100-point report from the already fetched bars.
+        import pandas as pd
+
+        from SayuStock.stock_analysis.technical import build_technical_report
+
+        from . import studywork  # noqa: F401 - install the upstream domain before importing its submodules
+
+        report = build_technical_report(
+            name=data["symbol"]["name"], code=data["symbol"]["code"], period_code=data["period"],
+            ohlcv_df=pd.DataFrame(data["bars"]).rename(columns={"ts": "date"}),
+            source_ids=(data["provider"],) if data["provider"] else (),
+        )
         return {
+            "technical_report": None if isinstance(report, str) else report.to_dict(),
             "ok": True,
             "symbol": data["symbol"],
             "period": data["period"],
@@ -342,92 +364,114 @@ class MarketService:
             risks.append(f"ATR={atr:.2f}%，波动率偏高")
         return round(max(-1.0, min(1.0, score)), 3), signals, risks
 
-    async def overview(self) -> dict[str, Any]:
-        now = datetime.now()
-        index_specs = (*INDEX_SPECS, *OPTIONAL_INDEX_SPECS)
-        intraday_tasks = [self.market.intraday(secid, ndays=1) for _, secid in index_specs]
-        boards = [
-            self.market.board("行业板块", limit=12, sort_asc=False),
-            self.market.board("行业板块", limit=12, sort_asc=True),
-            self.market.board("概念板块", limit=12, sort_asc=False),
-            self.market.board("概念板块", limit=12, sort_asc=True),
-        ]
-        gathered = await asyncio.gather(
-            *intraday_tasks,
-            *boards,
-            self.market.breadth(),
-            self.market.market_turnover(),
-            self.market.northbound(),
+    async def _overview_index(self, spec: str) -> dict[str, Any] | None:
+        try:
+            series = await self.market.intraday(spec, ndays=1)
+        except Exception as error:
+            logger.debug("[SayuStock] 指数分时 {}: {}", spec, error)
+            series = None
+        quote = series.quote if isinstance(series, IntradaySeries) else None
+        if not isinstance(quote, Quote):
+            quote = await self.market.quote(spec)
+        if not isinstance(quote, Quote):
+            return None
+        spark = sparkline_from_series(series, width=170, height=46) if isinstance(series, IntradaySeries) else ""
+        return {**quote_dict(quote), "spark": spark}
+
+    async def main_flow_uri(self) -> str:
+        from aiohttp import ClientError
+
+        from SayuStock.utils.market.adapters.composite import CompositeMarketData
+
+        if not isinstance(self.market, CompositeMarketData):
+            return ""
+        async def load() -> str:
+            try:
+                png = await asyncio.wait_for(self.market.main_flow_image(), timeout=5)
+            except (ClientError, OSError, ValueError, asyncio.TimeoutError) as error:
+                logger.debug("[SayuStock] 主力资金图片暂缺: {}", error)
+                return ""
+            return "data:image/png;base64," + base64.b64encode(png).decode("ascii") if png else ""
+        return await self._cache.get("market-flow-png", 90, load)
+
+    async def overview(self, *, include_flow: bool = False) -> dict[str, Any]:
+        snapshot = self._cache.get("market-overview", 45, self._overview_snapshot)
+        if not include_flow:
+            return await snapshot
+        data, flow = await asyncio.gather(snapshot, self.main_flow_uri())
+        return {**data, "main_flow_uri": flow}
+
+    async def _overview_snapshot(self) -> dict[str, Any]:
+        now = datetime.now(ZoneInfo("Asia/Shanghai"))
+        specs = (*INDEX_SPECS, *OPTIONAL_INDEX_SPECS)
+        jobs = [self._overview_index(spec) for _, spec in specs]
+        for name in ("行业板块", "概念板块"):
+            jobs.extend(self.market.board(name, limit=20, sort_asc=asc) for asc in (False, True))
+        results = await asyncio.gather(
+            *jobs, self.market.breadth(), self.market.market_turnover(), self.market.northbound(),
             return_exceptions=True,
         )
-        intraday_results = gathered[: len(index_specs)]
-        (
-            industry_rise,
-            industry_fall,
-            concept_rise,
-            concept_fall,
-            breadth,
-            turnover,
-            northbound,
-        ) = gathered[len(index_specs) :]
-
-        indices: list[dict[str, Any]] = []
-        warnings: list[str] = []
-        for (label, spec), result in zip(index_specs, intraday_results, strict=True):
-            if isinstance(result, BaseException) or is_market_error(result):
-                reason = str(result) if isinstance(result, BaseException) else getattr(result, "message", "行情失败")
-                warnings.append(f"{label}: {reason}")
-                continue
-            assert isinstance(result, IntradaySeries)
-            quote = result.quote
-            if quote is None:
-                continue
-            indices.append(
-                {
-                    "label": label,
-                    "spec": spec,
-                    **quote_dict(quote),
-                    "spark": sparkline_from_series(result, width=170, height=46),
-                }
-            )
-
-        breadth_data = self._breadth_dict(breadth)
+        warnings = []
+        indices = []
+        for (label, spec), result in zip(specs, results[:len(specs)], strict=True):
+            if isinstance(result, dict):
+                indices.append({"label": label, "spec": spec, **result})
+            else:
+                warnings.append(f"{label}报价暂缺")
+        rise, fall, concept_rise, concept_fall, bar, turnover, north = results[len(specs):]
+        breadth = self._breadth_dict(bar)
+        for section, value, required in (
+            ("行业领涨", rise, BoardSnapshot), ("行业领跌", fall, BoardSnapshot),
+            ("概念领涨", concept_rise, BoardSnapshot), ("概念领跌", concept_fall, BoardSnapshot),
+            ("成交额", turnover, MarketTurnover), ("北向资金", north, NorthboundFlow),
+        ):
+            if not isinstance(value, required) or (isinstance(value, BoardSnapshot) and not value.rows):
+                warnings.append(f"{section}数据暂缺")
+        if not breadth:
+            warnings.append("涨跌分布数据暂缺")
+        sources = {}
+        groups = {
+            "指数": [item["provider"] for item in indices],
+            "板块": [b.provider for b in (rise, fall, concept_rise, concept_fall) if isinstance(b, BoardSnapshot)],
+            "分布": [bar.provider] if breadth else [],
+            "成交额": [turnover.provider] if isinstance(turnover, MarketTurnover) else [],
+            "北向": [north.provider] if isinstance(north, NorthboundFlow) else [],
+        }
+        for section, providers in groups.items():
+            if any(providers):
+                sources[section] = source_label(*providers)
+        trade_date = turnover.last_trade_date if isinstance(turnover, MarketTurnover) else None
+        session_label = "行情交易日暂缺"
+        if trade_date:
+            session_label = f"行情交易日 {trade_date:%Y-%m-%d}"
+            if trade_date.date() < now.date():
+                session_label += "（最近交易日）"
+        note = ""
+        if isinstance(turnover, MarketTurnover) and turnover.prev_amount is not None:
+            delta = turnover.amount - turnover.prev_amount
+            note = ("放量" if delta > 0 else "缩量") + f" {abs(delta) / 1e8:,.0f} 亿" if delta else "成交额持平"
         return {
-            "ok": True,
-            "as_of": now.isoformat(timespec="seconds"),
-            "indices": indices,
-            "industries": {
-                "rise": self._board_rows(industry_rise),
-                "fall": self._board_rows(industry_fall),
-            },
-            "concepts": {
-                "rise": self._board_rows(concept_rise),
-                "fall": self._board_rows(concept_fall),
-            },
-            "breadth": breadth_data,
-            "turnover": _jsonable(turnover) if not is_market_error(turnover) else None,
-            "northbound": _jsonable(northbound) if not is_market_error(northbound) else None,
-            "warnings": warnings,
-            "provider": next((item.get("provider") for item in indices if item.get("provider")), None),
+            "ok": bool(indices or breadth or any(isinstance(b, BoardSnapshot) and b.rows for b in
+                                                (rise, fall, concept_rise, concept_fall)) or
+                       isinstance(turnover, MarketTurnover) or isinstance(north, NorthboundFlow)),
+            "as_of": now.isoformat(timespec="seconds"), "session_label": session_label,
+            "turnover_note": note, "indices": indices, "sources": sources,
+            "industries": {"rise": self._board_rows(rise), "fall": self._board_rows(fall)},
+            "concepts": {"rise": self._board_rows(concept_rise), "fall": self._board_rows(concept_fall)},
+            "breadth": breadth,
+            "turnover": _jsonable(turnover) if isinstance(turnover, MarketTurnover) else None,
+            "northbound": _jsonable(north) if isinstance(north, NorthboundFlow) else None,
+            "warnings": warnings, "provider": sources.get("指数"),
         }
 
     @staticmethod
     def _breadth_dict(bar: Any) -> dict[str, Any] | None:
-        if not isinstance(bar, BreadthBar):
+        if not isinstance(bar, BreadthBar) or not bar.buckets:
             return None
-        counts = {bucket.label: bucket.count for bucket in bar.buckets}
-        ordered = {label: counts.get(label, 0) for label in BREADTH_BANDS}
-        up = sum(value for label, value in ordered.items() if BREADTH_DIRECTION.get(label, 0) > 0)
-        down = sum(value for label, value in ordered.items() if BREADTH_DIRECTION.get(label, 0) < 0)
-        return {
-            "counts": ordered,
-            "up": up,
-            "down": down,
-            "flat": ordered.get("平", 0),
-            "limit_up": ordered.get("涨停", 0),
-            "limit_down": ordered.get("跌停", 0),
-            "provider": bar.provider,
-        }
+        counts = breadth_counts(bar)
+        up, down = breadth_up_down(counts)
+        return {"counts": counts, "up": up, "down": down, "flat": counts["平"], "limit_up": counts["涨停"],
+                "limit_down": counts["跌停"], "provider": bar.provider}
 
     @staticmethod
     def _board_rows(snapshot: Any) -> list[dict[str, Any]]:
@@ -442,14 +486,16 @@ class MarketService:
                 "amount": row.amount,
                 "lead_name": row.lead_name,
                 "lead_change_pct": row.lead_change_pct,
+                "fall_name": row.fall_name,
+                "fall_change_pct": row.fall_change_pct,
                 "up_count": row.extras.up_count if row.extras else None,
                 "down_count": row.extras.down_count if row.extras else None,
             }
             for row in snapshot.rows
         ]
 
-    async def board(self, kind: str = "industry", *, limit: int = 20) -> dict[str, Any]:
-        snapshot = await self.market.board(kind, limit=limit, sort_asc=False)
+    async def board(self, kind: str = "industry", *, limit: int = 20, falling: bool = False) -> dict[str, Any]:
+        snapshot = await self.market.board(kind, limit=limit, sort_asc=falling)
         if is_market_error(snapshot):
             raise MarketServiceError(snapshot.message)
         assert isinstance(snapshot, BoardSnapshot)
@@ -461,9 +507,9 @@ class MarketService:
             "rows": self._board_rows(snapshot),
         }
 
-    async def rank(self, rank_by: str, *, limit: int = 20) -> dict[str, Any]:
+    async def rank(self, rank_by: str, *, limit: int = 20, high_first: bool | None = None) -> dict[str, Any]:
         normalized = RankBy(rank_by) if rank_by in {item.value for item in RankBy} else rank_by
-        snapshot = await self.market.rank_list(normalized, limit=limit)
+        snapshot = await self.market.rank_list(normalized, limit=limit, high_first=high_first)
         if is_market_error(snapshot):
             raise MarketServiceError(snapshot.message)
         return _jsonable(snapshot)
@@ -534,24 +580,29 @@ class MarketService:
             ],
         }
 
-    async def compare(self, queries: list[str], period: str = "日k") -> dict[str, Any]:
-        if not 2 <= len(queries) <= 6:
-            raise MarketServiceError("对比需要 2~6 个标的")
+    async def compare(self, queries: list[str], period: str = "日k", *, start: date | None = None,
+                      end: date | None = None) -> dict[str, Any]:
+        from SayuStock.stock_stockinfo.data import CloudMapDataService
+
+        if not 1 <= len(queries) <= 13:
+            raise MarketServiceError("请输入最多 13 个标的或板块")
+        expanded = await CloudMapDataService(self.market).expand_for_compare(queries)
+        if len(expanded) < 2:
+            raise MarketServiceError("对比需要至少两个标的，或一个含成分股的板块")
         resolved_period = normalize_period(period)
-        series_list = await asyncio.gather(
-            *(self.market.kline(query, resolved_period) for query in queries),
-            return_exceptions=True,
-        )
+        if resolved_period == KlinePeriod.D1:
+            resolved_period = KlinePeriod.D1_YEAR
+        fetched = await asyncio.gather(*(self.market.kline(query, resolved_period, start=start, end=end)
+                                         for query in expanded), return_exceptions=True)
         traces: list[dict[str, Any]] = []
-        for query, result in zip(queries, series_list, strict=True):
-            if isinstance(result, BaseException) or is_market_error(result):
-                raise MarketServiceError(f"{query}: {getattr(result, 'message', result)}")
-            assert isinstance(result, KlineSeries)
-            if not result.bars:
-                raise MarketServiceError(f"{query}: 无 K 线数据")
+        failures: list[str] = []
+        series_list = []
+        for query, result in zip(expanded, fetched, strict=True):
+            if not isinstance(result, KlineSeries) or not result.bars or not result.bars[0].close:
+                failures.append(f"{query}：{getattr(result, 'message', '缺少可比较的行情')}")
+                continue
             base = result.bars[0].close
-            if not base:
-                raise MarketServiceError(f"{query}: 首日收盘价为 0")
+            series_list.append(result)
             step = max(1, len(result.bars) // 240)
             sampled = result.bars[::step]
             if sampled[-1] is not result.bars[-1]:
@@ -571,10 +622,13 @@ class MarketService:
                     ],
                 }
             )
+        if not traces:
+            raise MarketServiceError("；".join(failures) or "暂无可比较的行情")
         return {
             "ok": True,
             "period": resolved_period.value,
             "as_of": datetime.now().isoformat(timespec="seconds"),
+            "failures": failures,
             "traces": traces,
             "series": series_list,
         }

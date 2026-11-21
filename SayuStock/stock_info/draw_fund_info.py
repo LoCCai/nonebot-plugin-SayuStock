@@ -1,6 +1,7 @@
 import asyncio
 from typing import Union
 from datetime import date
+from dataclasses import dataclass
 
 from gsuid_core.logger import logger
 from gsuid_core.ai_core.trigger_bridge import ai_return
@@ -131,36 +132,37 @@ async def _fetch_row(market: MarketDataPort, raw: dict[str, object]) -> tuple[Fu
     )
 
 
-async def _render_page(
-    *,
-    fund_name: str,
-    fund_code: str,
-    rows: list[FundHoldingRow],
-    meta: str,
-    average: float | None,
-    report_period: str,
-    sparks: dict[str, str] | None = None,
-    sources: tuple[str | None, ...] = (),
-) -> str | bytes:
-    html = build_fund_holdings_html(
-        fund_name=fund_name,
-        fund_code=fund_code,
-        rows=rows,
+@dataclass(frozen=True, slots=True)
+class FundInfoView:
+    """一次基金持仓查询的全部展示数据，供群图、QWeb 制品和结构化字段共用。"""
+
+    fund_name: str
+    fund_code: str
+    rows: tuple[FundHoldingRow, ...]
+    sparks: dict[str, str]
+    failures: tuple[Failure, ...]
+    average: float | None
+    meta: str
+    report_period: str
+    sources: tuple[str | None, ...]
+
+
+async def fund_info_html(view: FundInfoView) -> str:
+    return build_fund_holdings_html(
+        fund_name=view.fund_name,
+        fund_code=view.fund_code,
+        rows=list(view.rows),
         index_items=await quote_index_items(["上证指数", "深证成指", "中证A500", "中证2000"]),
-        average=average,
-        report_period=report_period,
-        sparklines=sparks,
-        sources=sources,
-        meta=meta,
+        average=view.average,
+        report_period=view.report_period,
+        sparklines=view.sparks,
+        sources=view.sources,
+        meta=view.meta,
     )
-    try:
-        return await render_html(html, width=PAGE_W, label="基金持仓")
-    except RenderError as e:
-        logger.warning(f"[SayuStock] 基金持仓出图失败: {e}")
-        return "基金持仓出图失败"
 
 
-async def draw_fund_info(fcode: Union[str, int]) -> str | bytes:
+async def load_fund_info(fcode: Union[str, int]) -> FundInfoView | str:
+    """抓取基金重仓股与行情，不渲染；失败时返回可直接展示的中文错误。"""
     _code = await get_code_id(str(fcode))
     if _code is None:
         return "基金代码有误，请检查后重新输入~"
@@ -177,8 +179,7 @@ async def draw_fund_info(fcode: Union[str, int]) -> str | bytes:
     if not holdings:
         return _fund_data_failure(fund_name, fund_secid, "东方财富基金持仓接口未返回有效持仓")
 
-    market = get_market()
-    fetched = await _gather_rows(market, holdings)
+    fetched = await _gather_rows(get_market(), holdings)
     rows: list[FundHoldingRow] = []
     sparks: dict[str, str] = {}
     failures: list[Failure] = []
@@ -204,18 +205,30 @@ async def draw_fund_info(fcode: Union[str, int]) -> str | bytes:
     average = avg_p / len(ok) if ok else None
     meta = f"持仓 {len(rows)} 只 · 前十占比 {_weight_sum(rows):.2f}%"
     raw_period = fund_data["Expansion"] if fund_data is not None and "Expansion" in fund_data else None
-    report_period = _report_period(raw_period)
-    _ai_return_fund_info(fund_name, fund_secid, rows, average, failures, report_period=report_period)
-    return await _render_page(
+    return FundInfoView(
         fund_name=fund_name,
         fund_code=fund_secid,
-        rows=rows,
-        meta=meta,
-        average=average,
-        report_period=report_period,
+        rows=tuple(rows),
         sparks=sparks,
+        failures=tuple(failures),
+        average=average,
+        meta=meta,
+        report_period=_report_period(raw_period),
         sources=tuple(sources),
     )
+
+
+async def draw_fund_info(fcode: Union[str, int]) -> str | bytes:
+    view = await load_fund_info(fcode)
+    if isinstance(view, str):
+        return view
+    ai_return(fund_info_text(view))
+    html = await fund_info_html(view)
+    try:
+        return await render_html(html, width=PAGE_W, label="基金持仓")
+    except RenderError as e:
+        logger.warning(f"[SayuStock] 基金持仓出图失败: {e}")
+        return "基金持仓出图失败"
 
 
 def _report_period(value: object) -> str:
@@ -243,31 +256,27 @@ async def _gather_rows(
     return [(row, svg, reason, raw) for (row, svg, reason), raw in zip(results, holdings, strict=True)]
 
 
-def _ai_return_fund_info(
-    fund_name: str,
-    fund_code: str,
-    rows: list[FundHoldingRow],
-    avg_p: float | None,
-    failures: list[Failure] | None = None,
-    *,
-    report_period: str = "",
-) -> None:
-    """从基金持仓数据中提取文本信息，通过 ai_return 返回给 AI 分析"""
-    try:
-        result = f"【{fund_name}({fund_code}) 持仓信息】\n"
-        average = f"{avg_p:+.2f}%" if avg_p is not None else "暂无数据"
-        result += f"持仓数量: {len(rows)} 只，平均涨跌幅: {average}\n"
-        result += f"{report_period}\n\n" if report_period else "\n"
-        if failures:
-            detail = "、".join(f.label for f in failures)
-            result += f"⚠ {len(failures)} 只行情获取失败：{detail}\n\n"
-        result += "重仓股:\n"
-        for row in rows[:10]:
-            price = row.price if row.price is not None else "N/A"
-            change = row.change_pct if row.change_pct is not None else "N/A"
-            weight = row.weight if row.weight else "N/A"
-            result += f"  {row.name}({row.code}): 占比 {weight}%  最新价 {price}  今日 {change}%\n"
+def fund_info_text(view: FundInfoView) -> str:
+    """基金持仓的语义文字；AI 与群消息共用同一份。"""
+    average = f"{view.average:+.2f}%" if view.average is not None else "暂无数据"
+    result = f"【{view.fund_name}({view.fund_code}) 持仓信息】\n"
+    result += f"持仓数量: {len(view.rows)} 只，平均涨跌幅: {average}\n"
+    result += f"{view.report_period}\n\n" if view.report_period else "\n"
+    if view.failures:
+        detail = "、".join(item.label for item in view.failures)
+        result += f"⚠ {len(view.failures)} 只行情获取失败：{detail}\n\n"
+    result += "重仓股:\n"
+    for row in view.rows[:10]:
+        price = row.price if row.price is not None else "N/A"
+        change = row.change_pct if row.change_pct is not None else "N/A"
+        weight = row.weight if row.weight else "N/A"
+        result += f"  {row.name}({row.code}): 占比 {weight}%  最新价 {price}  今日 {change}%\n"
+    return result
 
-        ai_return(result)
+
+def _ai_return_fund_info(view: FundInfoView) -> None:
+    """保留旧调用点：语义文字 → ai_return。"""
+    try:
+        ai_return(fund_info_text(view))
     except Exception as e:
         logger.warning(f"[SayuStock] ai_return 基金持仓数据提取失败: {e}")

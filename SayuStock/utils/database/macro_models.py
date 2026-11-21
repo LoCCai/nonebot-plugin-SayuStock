@@ -14,7 +14,7 @@ from typing import Optional
 from datetime import datetime
 
 from sqlmodel import Field
-from sqlalchemy import UniqueConstraint
+from sqlalchemy import DateTime, UniqueConstraint
 
 from gsuid_core.webconsole.mount_app import PageSchema, GsAdminModel, site
 from gsuid_core.utils.database.base_models import BaseIDModel
@@ -69,10 +69,10 @@ class SayuMacroEvent(BaseIDModel, table=True):
     source_urls: str = Field(default="", title="最近复核来源 URL（换行分隔）")
     check_interval_hours: int = Field(default=DEFAULT_CHECK_INTERVAL_HOURS, title="复核间隔（小时）")
     created_by: str = Field(default="ai", title="创建者：ai / user:<id> / seed")
-    created_at: datetime = Field(default_factory=datetime.now, title="创建时间")
-    updated_at: datetime = Field(default_factory=datetime.now, title="最近更新时间")
-    last_checked_at: Optional[datetime] = Field(default=None, title="最近联网复核时间")
-    settled_at: Optional[datetime] = Field(default=None, title="盖棺定论时间")
+    created_at: datetime = Field(sa_type=DateTime, default_factory=datetime.now, title="创建时间")
+    updated_at: datetime = Field(sa_type=DateTime, default_factory=datetime.now, title="最近更新时间")
+    last_checked_at: Optional[datetime] = Field(sa_type=DateTime, default=None, title="最近联网复核时间")
+    settled_at: Optional[datetime] = Field(sa_type=DateTime, default=None, title="盖棺定论时间")
 
 
 @site.register_admin
