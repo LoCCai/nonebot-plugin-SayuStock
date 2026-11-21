@@ -25,8 +25,10 @@ import time
 import asyncio
 from typing import Literal, Callable, Iterator, cast
 from datetime import date
+from itertools import chain as iter_chain
 from contextlib import contextmanager
 from contextvars import ContextVar
+from dataclasses import dataclass
 from collections.abc import Sequence
 
 try:
@@ -137,6 +139,8 @@ SOURCE_TIMEOUT_S: float = 25.0
 # 而东财首拨要建连 + 握手，实测冷启动 3.98s —— 一次**正常**的取价会被切在成功
 # 之前，然后整条链白跑。取 8s ≈ 实测冷启动的两倍余量；真挂了仍然照常顺延。
 MIN_SOURCE_SLICE_S: float = 8.0
+SOURCE_COOLDOWN_S: float = 30.0
+SOURCE_COOLDOWN_MAX_S: float = 300.0
 
 # 取数总预算。调用方（如模拟盘取价）用 chain_deadline() 声明后，链上每个源按
 # 「剩余预算 / 剩余源数」分到时间片（不低于 MIN_SOURCE_SLICE_S，也不超过剩余
@@ -281,6 +285,17 @@ def _stamp_provider(result: object, pid: str) -> object:
     return stamp_provider(result, pid)
 
 
+@dataclass(slots=True)
+class _SourceHealth:
+    """A cold source has one initial probe; healthy requests remain concurrent."""
+
+    ready: bool = False
+    failures: int = 0
+    retry_at: float = 0
+    error: MarketError | None = None
+    probe: asyncio.Event | None = None
+
+
 class ConfigurableEquityMarket:
     """equity 槽位包装：按域链/全局链逐一尝试，尽可能交付。
 
@@ -290,6 +305,7 @@ class ConfigurableEquityMarket:
     def __init__(self, config_reader: Callable[[str, object], object] | None = None) -> None:
         self._reader = config_reader or default_config_reader
         self._instances: dict[str, MarketDataPort] = {}
+        self._kline_health: dict[str, _SourceHealth] = {}
 
     # -- 装配 -----------------------------------------------------------
 
@@ -309,6 +325,77 @@ class ConfigurableEquityMarket:
                 chain.append((pid, instance))
         return chain
 
+    async def _read_source(
+        self,
+        port: MarketDataPort,
+        method: str,
+        pid: str,
+        args: tuple[object, ...],
+        kwargs: dict[str, object],
+        budget: float,
+    ) -> object:
+        try:
+            return await asyncio.wait_for(getattr(port, method)(*args, **kwargs), timeout=budget)
+        except asyncio.TimeoutError:
+            return network_error(f"单源超时（>{budget:.1f}s）", provider=pid)
+        except Exception as exc:  # noqa: BLE001 - provider exceptions must allow fallback
+            return network_error(f"{type(exc).__name__}: {exc}", provider=pid)
+
+    async def _read_kline_source(
+        self,
+        port: MarketDataPort,
+        pid: str,
+        args: tuple[object, ...],
+        kwargs: dict[str, object],
+        budget: float,
+        *,
+        last_chance: bool,
+    ) -> tuple[object, bool]:
+        health = self._kline_health.setdefault(pid, _SourceHealth())
+        deadline = time.monotonic() + budget
+        while health.probe is not None:
+            try:
+                await asyncio.wait_for(health.probe.wait(), timeout=max(0.0, deadline - time.monotonic()))
+            except asyncio.TimeoutError:
+                return network_error("等待行情源探测超时", provider=pid), True
+            health = self._kline_health[pid]
+            if health.error and last_chance:
+                return health.error, True
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return network_error("K 线时间预算已耗尽", provider=pid), True
+        if health.error and time.monotonic() < health.retry_at and not last_chance:
+            return health.error, True
+
+        probe = asyncio.Event() if not health.ready else None
+        if probe is not None:
+            health.probe = probe
+        try:
+            result = await self._read_source(port, "kline", pid, args, kwargs, remaining)
+            # A late result from an earlier healthy batch cannot overwrite a newer probe.
+            if self._kline_health[pid] is health:
+                if is_market_error(result) and result.code == "network":
+                    failures = health.failures + 1
+                    delay = min(SOURCE_COOLDOWN_MAX_S, SOURCE_COOLDOWN_S * 2 ** min(failures - 1, 5))
+                    self._kline_health[pid] = _SourceHealth(
+                        failures=failures, retry_at=time.monotonic() + delay, error=result
+                    )
+                    logger.warning(
+                        f"[SayuStock][行情API] kline {PROVIDER_LABELS.get(pid, pid)} "
+                        f"连接失败（{result.message}），冷却 {delay:.0f}s，按配置顺延"
+                    )
+                elif not health.ready:
+                    if health.error:
+                        logger.info(f"[SayuStock][行情API] kline {PROVIDER_LABELS.get(pid, pid)} 已恢复响应")
+                    health.ready = True
+                    health.error = None
+                    health.failures = 0
+            return result, False
+        finally:
+            if probe is not None:
+                health.probe = None
+                probe.set()
+
     async def _dispatch(self, iface: str, method: str, *args: object, **kwargs: object) -> object:
         chain = self._chain(_IFACE_GROUPS.get(iface))
         if not chain:
@@ -317,25 +404,26 @@ class ConfigurableEquityMarket:
                 message=f"行情API无可用供应商（接口 {iface}）",
                 provider="registry",
             )
-        real_errors: list[MarketError] = []
+        real_errors: dict[int, MarketError] = {}
         first_error: MarketError | None = None
-        for i, (pid, port) in enumerate(chain):
+        deferred: list[tuple[int, tuple[str, MarketDataPort]]] = []
+        for attempt, (i, (pid, port)) in enumerate(iter_chain(enumerate(chain), deferred)):
+            last_chance = attempt >= len(chain)
             budget = _source_budget(len(chain) - i)
             if budget <= 0:
                 logger.warning(f"[SayuStock][行情API] {iface} 取数预算已耗尽，停止顺延")
                 break
-            try:
-                result = await asyncio.wait_for(getattr(port, method)(*args, **kwargs), timeout=budget)
-            except asyncio.TimeoutError:
-                # 超时按 network 处理顺延：慢≠没有，后面的源还有机会
-                result = network_error(f"单源超时（>{budget:.1f}s）", provider=pid)
-                logger.warning(f"[SayuStock][行情API] {iface} 在 {PROVIDER_LABELS.get(pid, pid)} 超时，按失败顺延")
-            except Exception as exc:  # noqa: BLE001 - 源内部异常转 network 错误顺延，链路尽可能交付
-                result = network_error(f"{type(exc).__name__}: {exc}", provider=pid)
-                logger.warning(
-                    f"[SayuStock][行情API] {iface} 在 {PROVIDER_LABELS.get(pid, pid)} 抛出异常"
-                    f"（{result.message}），按失败顺延"
+            if iface == "kline":
+                result, skipped = await self._read_kline_source(
+                    port, pid, args, kwargs, budget, last_chance=last_chance
                 )
+                if skipped and is_market_error(result):
+                    real_errors[i] = result
+                    if not last_chance:
+                        deferred.append((i, (pid, port)))
+                    continue
+            else:
+                result = await self._read_source(port, method, pid, args, kwargs, budget)
             if not is_market_error(result):
                 return _stamp_provider(result, pid)
             assert isinstance(result, MarketError)
@@ -348,7 +436,9 @@ class ConfigurableEquityMarket:
                 # 该源没有此接口，属预期，静默跳过
                 logger.debug(f"[SayuStock][行情API] {iface} 在 {PROVIDER_LABELS.get(pid, pid)} 不支持，跳过")
                 continue
-            real_errors.append(result)
+            real_errors[i] = result
+            if iface == "kline" and result.code == "network":
+                continue
             nxt = chain[i + 1] if i + 1 < len(chain) else None
             logger.warning(
                 f"[SayuStock][行情API] {iface} 由 {PROVIDER_LABELS.get(pid, pid)} 失败"
@@ -356,9 +446,10 @@ class ConfigurableEquityMarket:
                 f"{PROVIDER_LABELS.get(nxt[0], nxt[0]) if nxt else '无下一源'}"
             )
         if real_errors:
-            head = real_errors[0]
+            ordered = [real_errors[i] for i in sorted(real_errors)]
+            head = ordered[0]
             parts: list[str] = []
-            for err in real_errors:
+            for err in ordered:
                 label = PROVIDER_LABELS[err.provider] if err.provider in PROVIDER_LABELS else err.provider
                 parts.append(f"{label}: {err.message}")
             return MarketError(code=head.code, message="；".join(parts), provider=head.provider)

@@ -67,37 +67,6 @@ def _watch_key(account: WebAccount) -> str:
     return owner_key(platform="qweb", bot_id="qweb", user_id=account.qq)
 
 
-def _fit_chart_html(html: str) -> str:
-    """Scale a fixed-width chart page to the iframe viewport."""
-    script = """
-<script>
-(function () {
-  function fit() {
-    var page = document.querySelector('.chart-page');
-    if (!page) return;
-    var width = page.scrollWidth || 1200;
-    var scale = Math.min(1, (window.innerWidth - 4) / width);
-    page.style.transformOrigin = 'top left';
-    page.style.transform = 'scale(' + scale + ')';
-    page.style.position = 'absolute';
-    page.style.left = '0';
-    page.style.top = '0';
-    document.body.style.width = (width * scale) + 'px';
-    document.body.style.height = (page.scrollHeight * scale) + 'px';
-    document.body.style.overflowX = 'hidden';
-    document.documentElement.style.overflowX = 'hidden';
-  }
-  fit();
-  window.addEventListener('resize', fit);
-  window.addEventListener('load', fit);
-})();
-</script>
-"""
-    if "</body>" in html:
-        return html.replace("</body>", script + "</body>")
-    return html + script
-
-
 def _unavailable_router() -> APIRouter:
     router = APIRouter()
 
@@ -297,12 +266,12 @@ def _build_router(host: HostDependencies, prefix: str = ROUTER_PREFIX) -> APIRou
         headers = {
             "Content-Security-Policy": (
                 "default-src 'none'; style-src 'unsafe-inline'; img-src data:; "
-                "font-src data:; script-src 'unsafe-inline'; "
-                "frame-ancestors 'self'; sandbox allow-scripts"
+                "font-src data:; "
+                "frame-ancestors 'self'; sandbox"
             ),
             "X-Frame-Options": "SAMEORIGIN",
         }
-        return HTMLResponse(_fit_chart_html(html), headers=headers)
+        return HTMLResponse(html, headers=headers)
 
     @router.get(f"{prefix}/api/chart/png")
     async def chart_png(

@@ -2,6 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
+{% if stock_card %}<meta name="viewport" content="width=device-width,initial-scale=1"><title>{{ page.title }}</title>{% endif %}
 <style>
 {% include "theme.css" %}
 .chart-page { width: {{ width }}px; padding: 28px; }
@@ -31,9 +32,11 @@
 </head>
 <body>
 <main class="page chart-page">
+  {% if stock_card %}<header class="stock-heading"><div class="stock-heading-copy">{% endif %}
   <div class="chart-kicker">{{ page.eyebrow }}</div>
-  <div class="chart-title">{{ page.title }}</div>
+  {% if stock_card %}<h1>{{ page.title }}</h1>{% else %}<div class="chart-title">{{ page.title }}</div>{% endif %}
   {% if page.subtitle %}<div class="chart-subtitle">{{ page.subtitle }}</div>{% endif %}
+  {% if stock_card %}</div><!--stock-heading-art--></header>{% endif %}
   {% if page.legend %}
   <div class="chart-legend">
     {% for item in page.legend %}
@@ -51,6 +54,7 @@
     {% endfor %}
   </div>
   {% endif %}
+  {% if stock_card %}<div class="stock-panels">{% endif %}
   {% for panel in page.panels %}
   <section class="chart-panel">
     <div class="chart-panel-head">
@@ -110,8 +114,10 @@
     </div>
   </section>
   {% endfor %}
+  {% if stock_card %}</div>{% endif %}
   {% for note in page.notes %}<div class="chart-note">{{ note }}</div>{% endfor %}
   {% if page.footer %}<div class="chart-source">{{ page.footer }}</div>{% endif %}
+  {% if stock_card %}<!--stock-report-footer-->{% endif %}
 </main>
 </body>
 </html>

@@ -239,3 +239,44 @@ async def test_dashboard_tool_theme_and_image(monkeypatch: pytest.MonkeyPatch) -
     assert 'data-post-mode="light"' in html
     assert HOST_PALETTE["accent"] in html
     assert "复盘" in html
+
+
+def test_frame_uses_published_art_and_portable_fonts(tmp_path, monkeypatch):
+    from PIL import Image
+
+    _install_fake_host(monkeypatch)
+    template = tmp_path / "src/plugins/qi_post/template/_footer.j2"
+    template.parent.mkdir(parents=True)
+    template.write_text(
+        '<footer class="report-footer">{% for a in [footer_developer_avatar,footer_qiqi_avatar,footer_zaoyou_avatar] %}'
+        '<img src="{{ a }}">{% endfor %}{{ now_time }}</footer>'
+    )
+    assets = tmp_path / "qcard/assets"
+    assets.mkdir(parents=True)
+    for name, color in (("developer", "red"), ("qiqi", "blue"), ("sayu", "green")):
+        Image.new("RGB", (80, 80), color).save(assets / f"footer-{name}.jpg")
+    selected = assets / "header.png"
+    Image.new("RGB", (200, 80), "grey").save(selected)
+    seasonal = types.ModuleType("src.utils.seasonal_artwork")
+    seasonal.ROOT = tmp_path
+    seasonal.day_selection = lambda now: {"hero_id": "daily"}
+    seasonal.asset_path = lambda key, variant: selected
+    seasonal.seasonal_portraits = lambda now: {"qiqi": assets / "removed.jpg"}
+    artwork = types.ModuleType("src.utils.artwork_library")
+    artwork.decorative_image = lambda scope, now: "selected"
+    artwork.image_path = lambda key, variant: selected
+    monkeypatch.setitem(sys.modules, seasonal.__name__, seasonal)
+    monkeypatch.setitem(sys.modules, artwork.__name__, artwork)
+    HOST_CONTEXT.update(
+        post_mode="night",
+        post_theme="ink",
+        post_theme_css=(
+            "@font-face{font-family:'Qiqi Sans';src:url('file:///app/qi-dev/qcard/assets/fonts/sans-bold.otf')}"
+        ),
+    )
+    doc, _ = news_card(_news_payload(), 3)
+    for key in ('data-card-theme="ink"', 'data-theme="dark"', '<footer class="report-footer">', 'alt="七七插图"'):
+        assert doc.count(key) == 1
+    assert doc.count('src="data:image/webp;base64,') == 4
+    assert "file:///" not in doc and 'local("Noto Sans CJK SC Bold")' in doc
+    assert theme_service.apply_theme(doc) == doc

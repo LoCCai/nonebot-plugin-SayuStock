@@ -71,7 +71,7 @@ def async_file_cache(
 
             # 3. 获取文件路径
             file_path = get_file(**resolved_get_file_args)
-            logger.info(f"🔍️ [SayuStock] 检查缓存文件: {file_path}")
+            logger.debug(f"🔍️ [SayuStock] 检查缓存文件: {file_path}")
 
             if file_path.exists():
                 try:
@@ -82,10 +82,9 @@ def async_file_cache(
 
                     file_mod_time = datetime.fromtimestamp(file_path.stat().st_mtime)
                     if datetime.now() - file_mod_time < timedelta(minutes=cache_minutes):
-                        logger.info(f"[SayuStock] 缓存文件在{cache_minutes}分钟内，直接返回文件数据。")
-
+                        # 热缓存是正常路径：只留一条 debug，避免一次命中连刷三条日志
+                        logger.debug(f"✅ [SayuStock] 缓存命中: {file_path}")
                         async with aiofiles.open(file_path, mode="r", encoding="utf-8") as f:
-                            logger.success(f"✅ [SayuStock] 缓存命中！正在从 {file_path} 读取...")
                             content = await f.read()
                             return cast(_R, json.loads(content))
 
@@ -106,7 +105,7 @@ def async_file_cache(
                 serialized_result = json.dumps(result, indent=4, ensure_ascii=False)
                 async with aiofiles.open(file_path, mode="w", encoding="utf-8") as f:
                     await f.write(serialized_result)
-                    logger.success(f"✅ [SayuStock] 结果已成功缓存至 {file_path}")
+                    logger.debug(f"✅ [SayuStock] 结果已缓存至 {file_path}")
             except (TypeError, IOError) as e:
                 logger.warning(f"🚨 [SayuStock] 缓存结果失败: {e}")
 

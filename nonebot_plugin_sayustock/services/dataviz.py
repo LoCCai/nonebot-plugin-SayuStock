@@ -99,7 +99,7 @@ def _base_html(title: str, body: str, *, width: int = 1100, subtitle: str = "") 
 :root{{--bg:#0b1220;--panel:#131e32;--line:#22324f;--text:#e8eefb;--muted:#8ea2c4;--gold:#ffc857}}
 *{{box-sizing:border-box}}body{{margin:0;background:radial-gradient(1000px 500px at 10% -10%,#1c3156,var(--bg) 60%);
 color:var(--text);font:14px/1.55 "Microsoft YaHei","PingFang SC",system-ui,sans-serif}}
-.wrap{{max-width:{width}px;margin:0 auto;padding:28px 24px 40px}}
+.wrap{{--stock-width:{width}px;max-width:{width}px;margin:0 auto;padding:28px 24px 40px}}
 h1{{font-size:24px;margin:0 0 4px}}.sub{{color:var(--muted);font-size:12px;margin-bottom:18px}}
 .panel{{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:18px}}
 svg{{display:block;width:100%;height:auto}}.legend{{display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;font-size:12px;color:var(--muted)}}
@@ -108,9 +108,9 @@ table{{width:100%;border-collapse:collapse;font-size:12px}}th,td{{padding:8px 8p
 th{{color:var(--muted);font-weight:600}}.num{{text-align:right;font-variant-numeric:tabular-nums}}
 .note{{margin-top:14px;padding:10px 12px;border-left:3px solid var(--gold);background:rgba(255,200,87,.06);
 color:#ffe6ad;font-size:12px}}.footer{{color:#63769a;font-size:10px;margin-top:18px}}
-</style></head><body><div class="wrap"><h1>{_esc(title)}</h1>
-<div class="sub">{_esc(subtitle)}</div>{body}
-<div class="footer">SayuStock · 数据仅供研究，不构成投资建议</div></div></body></html>"""
+</style></head><body><div class="wrap"><header class="stock-heading"><div class="stock-heading-copy"><h1>{_esc(title)}</h1>
+<div class="sub">{_esc(subtitle)}</div></div><!--stock-heading-art--></header>{body}
+<div class="footer">SayuStock · 数据仅供研究，不构成投资建议</div><!--stock-report-footer--></div></body></html>"""
 
 
 def line_chart_html(

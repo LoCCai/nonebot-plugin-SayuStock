@@ -137,6 +137,8 @@ class _StubPort:
             code = self.fail_ifaces[iface]
             if code == "not_found":
                 return not_found("未找到标的", provider=self.tag)
+            if code == "empty":
+                return MarketError("empty", "无该标的数据", self.tag)
             if code == "raise":
                 raise RuntimeError("源内部异常")
             return network_error("boom", provider=self.tag)
@@ -667,3 +669,59 @@ def test_source_label_and_footer() -> None:
     q = stamp_provider(_make_quote(), "tencent")
     assert isinstance(q, Quote) and q.provider == "tencent"
     assert stamp_provider(q, "sina").provider == "tencent"
+
+
+def test_concurrent_kline_probes_and_recovery(monkeypatch: pytest.MonkeyPatch) -> None:
+    stubs = _patch_registry(monkeypatch)
+
+    async def run() -> None:
+        market = _market({})
+        primary = stubs["eastmoney"]
+        primary.fail_ifaces["kline"] = "network"
+        original = primary.kline
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        calls = 0
+
+        async def delayed(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            entered.set()
+            await release.wait()
+            return await original(*args, **kwargs)
+
+        monkeypatch.setattr(primary, "kline", delayed)
+        symbols = ["600519", "000858", "000300"]
+        batch = asyncio.gather(*(market.kline(symbol, KlinePeriod.D1_YEAR) for symbol in symbols))
+        await entered.wait()
+        await asyncio.sleep(0)
+        release.set()
+        results = await batch
+        assert calls == 1 and all(isinstance(row, KlineSeries) and row.provider == "tencent" for row in results)
+        assert [row.symbol.code for row in results if isinstance(row, KlineSeries)] == symbols
+        assert isinstance(await market.quote(symbols[0]), Quote)
+        assert isinstance(await market.kline(symbols[0], KlinePeriod.D1_YEAR), KlineSeries) and calls == 1
+
+        # A cancelled recovery probe releases waiters and allows a later probe.
+        market._kline_health["eastmoney"].retry_at = 0
+        entered.clear()
+        release.clear()
+        recovery = asyncio.create_task(market.kline(symbols[0], KlinePeriod.D1_YEAR))
+        await entered.wait()
+        recovery.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await recovery
+        assert market._kline_health["eastmoney"].probe is None
+        primary.fail_ifaces.clear()
+        release.set()
+        restored = await market.kline(symbols[0], KlinePeriod.D1_YEAR)
+        assert isinstance(restored, KlineSeries) and restored.provider == "eastmoney"
+
+        # An empty series is specific to the symbol, so the next still tries the same source.
+        primary.fail_ifaces["kline"] = "empty"
+        await market.kline(symbols[0], KlinePeriod.D1_YEAR)
+        primary.fail_ifaces.clear()
+        restored = await market.kline(symbols[1], KlinePeriod.D1_YEAR)
+        assert isinstance(restored, KlineSeries) and restored.provider == "eastmoney"
+
+    asyncio.run(run())

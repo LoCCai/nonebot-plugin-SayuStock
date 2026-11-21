@@ -97,7 +97,7 @@ def chart_from_page(page: Any, *, context: Mapping[str, Any] | None = None) -> s
     if isinstance(page, str):
         return None
     resolved = _theme_context(context)
-    return apply_theme(page_html(page), resolved, recolor=True)
+    return apply_theme(page_html(page, stock_card=True), resolved, recolor=True)
 
 
 async def build_kline_html(service: MarketService, query: str, period: str = "日k") -> tuple[str, int, str]:
@@ -237,7 +237,7 @@ def overview_html(data: dict[str, Any], *, width: int = 1280, context: Mapping[s
 --warn-bg:{palette.surface_alt};--warn-border:{palette.warning};--warn-text:{palette.warning}}}
 *{{box-sizing:border-box}}body{{margin:0;background:radial-gradient(1200px 600px at 15% -10%,{palette.page_top} 0,var(--bg) 55%);
 color:var(--text);font:14px/1.55 "Microsoft YaHei","PingFang SC",system-ui,sans-serif}}
-.wrap{{max-width:{width}px;margin:0 auto;padding:28px 22px 48px}}
+.wrap{{--stock-width:{width}px;max-width:{width}px;margin:0 auto;padding:28px 22px 48px}}
 header{{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;margin-bottom:22px}}
 h1{{font-size:26px;margin:0;letter-spacing:.5px}}h1 span{{color:var(--gold)}}
 .sub{{color:var(--muted);font-size:12px}}.up{{color:var(--up)}}.down{{color:var(--down)}}.flat{{color:var(--flat)}}
@@ -264,9 +264,9 @@ th{{color:var(--muted);font-weight:500}}.num{{text-align:right;font-variant-nume
 background:var(--warn-bg);color:var(--warn-text);font-size:12px}}
 @media(max-width:760px){{.tables{{grid-template-columns:1fr}}.stats{{grid-template-columns:1fr}}}}
 </style></head><body><div class="wrap">
-<header><div><h1>SayuStock <span>大盘概览</span></h1>
-<div class="sub">数据时间 {_esc(data.get("as_of"))} · 来源 {_esc(data.get("provider") or "多源聚合")}</div></div>
-<div class="sub">仅供研究，不构成投资建议</div></header>
+<header class="stock-heading"><div class="stock-heading-copy"><h1>A股大盘概览</h1>
+<div class="sub">数据时间 {_esc(data.get("as_of"))} · 来源 {_esc(data.get("provider") or "多源聚合")}</div>
+<div class="sub">仅供研究，不构成投资建议</div></div><!--stock-heading-art--></header>
 <section class="grid">{index_cards}</section>
 <div class="panel"><h2>市场宽度</h2>{breadth_bar}</div>
 <div class="panel stats">
@@ -285,9 +285,9 @@ background:var(--warn-bg);color:var(--warn-text);font-size:12px}}
   <tbody>{sector_rows(concept_fall)}</tbody></table></div>
 </div>
 {warnings_html}
-<div class="sub" style="margin-top:22px">SayuStock · NoneBot2 branch · {datetime.now():%Y-%m-%d %H:%M}</div>
+<!--stock-report-footer-->
 </div></body></html>"""
-    return apply_theme(document, ctx, recolor=True)
+    return apply_theme(document, ctx)
 
 
 def _clean_news_text(value: Any) -> str:
@@ -396,7 +396,7 @@ def news_card(data: Mapping[str, Any], limit: int = 12) -> tuple[str, str]:
 --line:{palette.border};--accent:{palette.accent};--warning:{palette.warning};--up:{palette.up};--down:{palette.down}}}
 *{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--text);
 font:14px/1.55 "Microsoft YaHei","PingFang SC",system-ui,sans-serif}}
-.wrap{{max-width:860px;margin:0 auto;padding:24px 22px 40px}}
+.wrap{{--stock-width:860px;max-width:860px;margin:0 auto;padding:24px 22px 40px}}
 .news-head{{display:flex;align-items:flex-end;justify-content:space-between;gap:14px;
 border-bottom:2px solid var(--line);padding-bottom:14px;margin-bottom:14px}}
 .news-head h1{{margin:0;font-size:24px;letter-spacing:.5px}}
@@ -414,11 +414,11 @@ font-variant-numeric:tabular-nums;margin-bottom:5px}}
 padding:18px;color:var(--muted);text-align:center}}
 .foot{{color:var(--muted);font-size:11px;margin-top:18px}}
 </style></head><body><div class="wrap">
-<header class="news-head"><div><h1>财经快讯</h1>
-<div class="news-source">来源：<b>{_esc(source)}</b></div></div>
-<div class="news-count">共 {count} 条</div></header>
+<header class="stock-heading"><div class="stock-heading-copy"><h1>财经快讯</h1>
+<div class="news-source">来源：<b>{_esc(source)}</b></div>
+<div class="news-count">共 {count} 条</div></div><!--stock-heading-art--></header>
 <section class="news-list">{"".join(rows)}</section>
-<div class="foot">七七 · {datetime.now():%Y-%m-%d %H:%M}</div>
+<!--stock-report-footer-->
 </div></body></html>"""
     plain = "\n".join([f"【财经快讯】来源：{source} · {count} 条", *plain_rows])
     return apply_theme(document, ctx), plain
@@ -504,7 +504,7 @@ def dashboard_html(
 --up:{palette.up};--down:{palette.down};--flat:{palette.flat}}}
 *{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--text);
 font:14px/1.55 "Microsoft YaHei","PingFang SC",system-ui,sans-serif}}
-.wrap{{max-width:{width}px;margin:0 auto;padding:26px 24px 44px}}
+.wrap{{--stock-width:{width}px;max-width:{width}px;margin:0 auto;padding:26px 24px 44px}}
 .dash-head{{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;margin-bottom:18px}}
 .dash-head h1{{margin:0;font-size:25px}}.dash-sub{{color:var(--muted);font-size:12px}}
 .dash-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px}}
@@ -526,13 +526,13 @@ background:var(--panel2);color:var(--muted);font-size:11px}}
 color:var(--warning);font-size:12px}}.foot{{color:var(--muted);font-size:11px;margin-top:20px}}
 @media(max-width:720px){{.dash-head{{display:block}}}}
 </style></head><body><div class="wrap">
-<header class="dash-head"><div><h1>{resolved_title}</h1>
-<div class="dash-sub">更新时间 {as_of} · 网页与群图片同源</div></div>
-<div class="dash-sub">仅供研究，不构成投资建议</div></header>
+<header class="stock-heading"><div class="stock-heading-copy"><h1>{resolved_title}</h1>
+<div class="dash-sub">更新时间 {as_of}</div>
+<div class="dash-sub">仅供研究，不构成投资建议</div></div><!--stock-heading-art--></header>
 <section class="dash-grid">{"".join(cards)}</section>
 {"".join(table_blocks)}
 {note_html}
-<div class="foot">SayuStock · AI 数据看板</div>
+<!--stock-report-footer-->
 </div></body></html>"""
     return apply_theme(document, ctx)
 
@@ -592,8 +592,9 @@ a{{color:var(--accent)}}.up{{color:var(--up)}}.down{{color:var(--down)}}.flat{{c
 .foot{{color:var(--muted);font-size:12px}}
 @media print{{body{{background:#fff}}}}
 </style></head>
-<body><div class="wrap"><h1>{_esc(title)}</h1><div class="meta">{meta_html}</div>{body}
-<hr><p class="foot">SayuStock · 数据仅供研究，不构成投资建议</p></div></body></html>"""
+<body><div class="wrap"><header class="stock-heading"><div class="stock-heading-copy"><h1>{_esc(title)}</h1>
+<div class="meta">{meta_html}</div></div><!--stock-heading-art--></header>{body}
+<hr><p class="foot">SayuStock · 数据仅供研究，不构成投资建议</p><!--stock-report-footer--></div></body></html>"""
     return apply_theme(document, ctx)
 
 

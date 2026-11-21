@@ -23,6 +23,8 @@ import importlib
 from typing import Any, Mapping
 from dataclasses import dataclass
 
+from .card_frame import apply_frame
+
 LOGGER = logging.getLogger(__name__)
 
 HOST_THEME_MODULE = "src.utils.report_theme"
@@ -254,7 +256,7 @@ def _host_palette(module: Any | None, raw: Any) -> dict[str, str]:
     return graph
 
 
-def _extended_palette(graph: Mapping[str, str], mode: str) -> ThemePalette:
+def _extended_palette(graph: Mapping[str, str]) -> ThemePalette:
     background = _normalize_color(graph.get("background"), FALLBACK_PALETTE["background"])
     surface = _normalize_color(graph.get("surface"), FALLBACK_PALETTE["surface"])
     text = _normalize_color(graph.get("text"), FALLBACK_PALETTE["text"])
@@ -263,7 +265,7 @@ def _extended_palette(graph: Mapping[str, str], mode: str) -> ThemePalette:
     secondary = _normalize_color(graph.get("secondary"), FALLBACK_PALETTE["secondary"])
     pink = _normalize_color(graph.get("pink"), FALLBACK_PALETTE["pink"])
     border = _normalize_color(graph.get("border"), FALLBACK_PALETTE["border"])
-    dark = _is_dark_mode(mode, background)
+    dark = _luminance(background) < 0.35
 
     up = "#f6465d" if dark else "#c62828"
     down = "#2ebd85" if dark else "#0a7a4b"
@@ -376,10 +378,7 @@ def theme_palette(context: Mapping[str, Any] | None = None) -> ThemePalette:
     """Build the extended palette used by HTML and SVG output."""
     resolved = context if context is not None else resolve_theme()
     graph = graph_palette(resolved)
-    mode = _text(resolved.get("mode") if isinstance(resolved, Mapping) else "", "")
-    if mode not in {"dark", "light"}:
-        mode = "dark" if _is_dark_mode("", graph["background"]) else "light"
-    return _extended_palette(graph, mode)
+    return _extended_palette(graph)
 
 
 def _style_inner(css: str) -> str:
@@ -448,6 +447,51 @@ def _compat_css() -> str:
 html, body { color: var(--ss-text); background-color: var(--ss-bg); }
 body { margin: 0; }
 a { color: var(--ss-accent); }
+html[data-card-theme] body, html[data-card-theme] .chart-page {
+  background-color:var(--ss-bg);background-image:var(--background-image,none);
+  font-family:var(--font-family-display,"Qiqi Sans","WenQuanYi Zen Hei",sans-serif);
+}
+html[data-card-theme] .wrap, html[data-card-theme] .chart-page {
+  box-sizing:border-box;max-width:100%;margin-inline:auto;
+}
+html[data-card-theme] .wrap { width:min(100%,var(--stock-width,920px)); }
+.stock-heading {
+  display:flex;align-items:stretch;justify-content:space-between;gap:0;margin:0 0 18px;
+  padding:0;background:var(--surface-accent,var(--ss-surface-alt));color:var(--ss-text);
+  border:1px solid var(--ss-border);border-radius:var(--menu-radius,14px);overflow:hidden;
+}
+.stock-heading-copy { flex:1;min-width:0;align-self:center;padding:16px clamp(12px,3vw,30px);overflow-wrap:anywhere; }
+.stock-heading h1 { margin:0;font-size:clamp(22px,3.3vw,38px);line-height:1.25; }
+.stock-heading-copy :is(.sub,.dash-sub,.news-source,.meta,.chart-subtitle,.news-count) {
+  color:var(--ss-muted);margin:5px 0 0;
+}
+.stock-heading-copy .chart-kicker { margin:0 0 4px; }
+.stock-heading-art {
+  display:block;align-self:stretch;width:clamp(110px,32%,370px);height:auto;min-height:96px;
+  max-height:166px;object-fit:cover;object-position:center;mask-image:linear-gradient(90deg,transparent,#000 15%);
+}
+html[data-card-theme] :is(.news-item,.panel,.dash-panel,.dash-card,.chart-card) {
+  border-radius:var(--menu-radius,12px);
+}
+.report-footer {
+  --card-bg:var(--ss-surface);--text-muted:var(--ss-muted);--primary-color:var(--ss-accent);
+  --shadow-color:var(--card-shadow-color,transparent);--border-color:var(--ss-border);
+  font-variant-numeric:tabular-nums;
+}
+.stock-panels { min-width:0;overflow-x:auto; }
+.chart-page .stock-heading { flex-shrink:0; }
+html[data-card-theme] .note {color:var(--ss-text);background:var(--surface-accent,var(--ss-surface-alt));}
+@media(max-width:680px) {
+  html[data-card-theme] :is(.wrap,.chart-page) { padding:12px; }
+  .stock-heading-art { min-height:84px;max-height:132px; }
+  .stock-heading-copy { padding:10px 12px; }
+  .wrap table { overflow-wrap:anywhere; }
+  .wrap :is(.tables,.stats,.grid,.dash-grid) {grid-template-columns:repeat(auto-fit,minmax(min(148px,100%),1fr));}
+  .dash-panel,.panel { max-width:100%;overflow-x:auto; }
+  .report-footer .report-footer-avatars {gap:8px;}
+  .report-footer .report-footer-avatars img {width:48px;height:48px;}
+}
+
 .up, .is-up { color: var(--ss-up) !important; }
 .down, .is-down { color: var(--ss-down) !important; }
 .flat, .is-flat { color: var(--ss-flat) !important; }
@@ -459,6 +503,20 @@ svg text { font-variant-numeric: tabular-nums; }
 """
 
 
+_QIQI_FONT_SOURCES = {
+    "sans-regular.otf": 'local("Noto Sans CJK SC"), local("WenQuanYi Zen Hei"), local("Microsoft YaHei")',
+    "sans-bold.otf": 'local("Noto Sans CJK SC Bold"), local("Microsoft YaHei Bold"), local("WenQuanYi Zen Hei")',
+    "serif-regular.otf": 'local("Noto Serif CJK SC"), local("Songti SC"), local("SimSun")',
+    "serif-bold.otf": 'local("Noto Serif CJK SC Bold"), local("Songti SC Bold")',
+    "emoji.ttf": 'local("Noto Color Emoji"), local("Apple Color Emoji"), local("Segoe UI Emoji")',
+}
+_FONT_URL = re.compile(r"""url\(\s*['"]?file:///[^)'"]*/qcard/assets/fonts/([\w.-]+)['"]?\s*\)""")
+
+
+def portable_font_css(css: str) -> str:
+    return _FONT_URL.sub(lambda match: _QIQI_FONT_SOURCES.get(match[1], 'local("sans-serif")'), css)
+
+
 def theme_css(context: Mapping[str, Any] | None = None) -> str:
     """Return the CSS applied to a rendered page (host CSS first, then roles)."""
     resolved = context if context is not None else resolve_theme()
@@ -467,7 +525,7 @@ def theme_css(context: Mapping[str, Any] | None = None) -> str:
     host_css = _style_inner(_text(resolved.get("post_theme_css") if isinstance(resolved, Mapping) else ""))
     pieces: list[str] = []
     if host_css.strip():
-        pieces.append(host_css)
+        pieces.append(portable_font_css(host_css))
     pieces.extend([_role_css(palette, mode), _compat_css()])
     return "\n".join(pieces)
 
@@ -484,12 +542,16 @@ def _escape_attr(value: Any) -> str:
 def _apply_attrs(document: str, context: Mapping[str, Any]) -> str:
     post_theme = _escape_attr(context.get("post_theme"))
     post_mode = _escape_attr(context.get("post_mode"))
-    attrs = f' data-post-theme="{post_theme}" data-post-mode="{post_mode}" data-sayustock-theme="1"'
+    mode = "dark" if _is_dark_mode(str(context.get("post_mode", "")), graph_palette(context)["background"]) else "light"
+    attrs = (
+        f' data-card-theme="{post_theme}" data-theme="{mode}" data-post-theme="{post_theme}"'
+        f' data-post-mode="{post_mode}" data-sayustock-theme="1"'
+    )
     match = _HTML_TAG.search(document)
     if match is None:
         return document
     existing = match.group(1)
-    for name in ("data-post-theme", "data-post-mode", "data-sayustock-theme"):
+    for name in ("data-card-theme", "data-theme", "data-post-theme", "data-post-mode", "data-sayustock-theme"):
         existing = re.sub(rf"\s{re.escape(name)}=[\"'][^\"']*[\"']", "", existing, flags=re.I)
     return document[: match.start()] + f"<html{existing}{attrs}>" + document[match.end() :]
 
@@ -573,17 +635,19 @@ def _svg_semantics(document: str) -> str:
 
 
 def _insert_style(document: str, style: str) -> str:
-    without_old = _OWN_STYLE.sub("", document)
-    head = _HEAD_CLOSE.search(without_old)
+    old = _OWN_STYLE.search(document)
+    if old is not None:
+        return document[: old.start()] + style + document[old.end() :]
+    head = _HEAD_CLOSE.search(document)
     if head is not None:
-        return without_old[: head.start()] + style + "\n" + without_old[head.start() :]
-    body = _BODY_OPEN.search(without_old)
+        return document[: head.start()] + style + "\n" + document[head.start() :]
+    body = _BODY_OPEN.search(document)
     if body is not None:
-        return without_old[: body.start()] + style + without_old[body.start() :]
-    html = _HTML_TAG.search(without_old)
+        return document[: body.start()] + style + document[body.start() :]
+    html = _HTML_TAG.search(document)
     if html is not None:
-        return without_old[: html.end()] + style + without_old[html.end() :]
-    return style + without_old
+        return document[: html.end()] + style + document[html.end() :]
+    return style + document
 
 
 def apply_theme(
@@ -607,7 +671,7 @@ def apply_theme(
     result = _recolor(document, palette) if recolor else document
     result = _svg_semantics(result)
     result = _apply_attrs(result, resolved)
-    return _insert_style(result, theme_style(resolved))
+    return apply_frame(_insert_style(result, theme_style(resolved)))
 
 
 __all__ = [

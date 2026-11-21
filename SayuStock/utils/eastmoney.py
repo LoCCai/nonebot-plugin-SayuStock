@@ -1,5 +1,6 @@
 import re
 import json
+import time
 import random
 import asyncio
 from typing import Any, Dict, List, Tuple, Union, Literal, Optional, TypedDict
@@ -96,6 +97,11 @@ EASTMONEY_KLINE_DEFAULT_DAYS: Dict[str, int] = {
 # 但要小于链上 per-source 封顶，备用域名的重试才有意义。
 _EM_ATTEMPT_TIMEOUT_S = 10
 
+# 同一类直连失败在窗口内只正式告警一次。3 只票并发 K 线时，每只都会先撞
+# push2 再撞 push2delay；逐次 warning 会把真正的源链失败淹没。窗口内的
+# 重复事件降为 debug（仍可排查），不影响任何返回值或域名切换逻辑。
+_EM_NOTICE_INTERVAL_S = 60.0
+
 
 class EastMoneyStockItem(TypedDict):
     secid: str
@@ -126,15 +132,39 @@ class EastMoneyRequester:
         self.now_queue = 0
         self.menu_cache: Dict[str, Dict[int, Dict[str, str]]] = {}
         self.preferred_push_domain: Literal["push2", "push2delay"] = "push2"
+        self._notice_at: Dict[str, float] = {}
+
+    def _notice(self, key: str, message: str, *, level: Literal["info", "warning", "error"] = "warning") -> None:
+        """同一类直连事件在窗口内只打一次正式日志，重复项降为 debug。"""
+        now = time.monotonic()
+        last = self._notice_at.get(key)
+        if last is not None and now - last < _EM_NOTICE_INTERVAL_S:
+            logger.debug(message)
+            return
+        self._notice_at[key] = now
+        if level == "error":
+            logger.error(message)
+        elif level == "info":
+            logger.info(message)
+        else:
+            logger.warning(message)
 
     def _update_preferred_domain(self, req_url: str) -> None:
         """根据失败的 URL 更新首选域名。"""
         if "push2.eastmoney.com" in req_url and "push2delay" not in req_url:
             self.preferred_push_domain = "push2delay"
-            logger.info("[SayuStock][EM] push2 失败，后续优先使用 push2delay")
+            self._notice(
+                "domain",
+                "[SayuStock][EM] push2 失败，后续优先使用 push2delay",
+                level="info",
+            )
         elif "push2delay.eastmoney.com" in req_url:
             self.preferred_push_domain = "push2"
-            logger.info("[SayuStock][EM] push2delay 失败，后续优先使用 push2")
+            self._notice(
+                "domain",
+                "[SayuStock][EM] push2delay 失败，后续优先使用 push2",
+                level="info",
+            )
 
     async def stock_request(
         self,
@@ -219,8 +249,10 @@ class EastMoneyRequester:
                         logger.debug(raw_data)
 
                         if resp.status != 200:
-                            logger.error(
-                                f"[SayuStock][EM] 访问 {req_url} 失败, 错误码: {resp.status}, 错误返回: {raw_data}"
+                            self._notice(
+                                "status",
+                                f"[SayuStock][EM] 访问 {req_url} 失败, 错误码: {resp.status}, 错误返回: {raw_data}",
+                                level="error",
                             )
                             self._update_preferred_domain(req_url)
                             if req_url != urls[-1]:
@@ -233,11 +265,14 @@ class EastMoneyRequester:
                             return raw_data
                         # 限流码换域名没用，立刻交给源链。再试 push2delay 会吃掉备用源的时间。
                         if isinstance(raw_data, dict) and "rc" in raw_data and raw_data["rc"] == -400016:
-                            logger.warning(f"[SayuStock][EM] 限流 -400016，不再重试备用域名: {req_url}")
+                            self._notice(
+                                "rate-limit",
+                                f"[SayuStock][EM] 限流 -400016，不再重试备用域名: {req_url}",
+                            )
                             return -400016
                         return raw_data
                 except ServerDisconnectedError:
-                    logger.warning(f"[SayuStock][EM] 请求 {req_url} 连接断开。")
+                    self._notice("disconnect", f"[SayuStock][EM] 请求 {req_url} 连接断开。")
                     self._update_preferred_domain(req_url)
                 except (ClientConnectionError, asyncio.TimeoutError) as error:
                     # 超时必须也走「切备用域名」这条路。aiohttp 的
@@ -245,13 +280,17 @@ class EastMoneyRequester:
                     # （不是 ServerTimeoutError，因而不属于 ClientConnectionError），
                     # 漏掉它就等于超时直接冲出 stock_request：备用域名一次都轮不到，
                     # 全 A 翻页里一页超时就让整个任务失败。
-                    logger.error(f"[SayuStock][EM] 请求 {req_url} 失败: {type(error).__name__}: {error}")
+                    self._notice(
+                        "connection-error",
+                        f"[SayuStock][EM] 请求 {req_url} 失败: {type(error).__name__}: {error}",
+                        level="error",
+                    )
                     self._update_preferred_domain(req_url)
                 finally:
                     self.now_queue -= 1
                 if req_url == urls[-1]:
                     return -400016
-                logger.warning(f"[SayuStock][EM] 请求 {req_url} 失败, 尝试切换到备用域名...")
+                self._notice("fallback", f"[SayuStock][EM] 请求 {req_url} 失败, 尝试切换到备用域名...")
         return -400016
 
     async def resolve_stock(self, query: str) -> Optional[EastMoneyStockItem]:

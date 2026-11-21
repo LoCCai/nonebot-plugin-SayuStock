@@ -163,10 +163,17 @@ def plot_bounds(width: int = WIDTH, right_margin: int = 77) -> tuple[int, int]:
     return plot_width, plot_width - right_margin
 
 
-def page_html(page: ChartPage) -> str:
+def page_html(page: ChartPage, *, stock_card: bool = False) -> str:
     plot_width, right = plot_bounds(page.width, page.right_margin)
     return render_template(
-        "chart_page.html", page=page, width=page.width, plot_width=plot_width, left=LEFT, right=right, top=TOP
+        "chart_page.html",
+        page=page,
+        width=page.width,
+        plot_width=plot_width,
+        left=LEFT,
+        right=right,
+        top=TOP,
+        stock_card=stock_card,
     )
 
 
