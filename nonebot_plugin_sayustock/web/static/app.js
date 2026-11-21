@@ -1,11 +1,10 @@
 (() => {
   "use strict";
 
-  const API = "/sayustock/api";
+  const API = new URL("api", document.baseURI).pathname.replace(/\/$/, "");
+  const MOUNT = new URL(".", document.baseURI).pathname.replace(/\/$/, "");
   const state = {
-    token: localStorage.getItem("sayustock_token") || new URLSearchParams(location.search).get("token") || "",
     view: "market",
-    history: [],
     lastQuote: null,
   };
 
@@ -15,6 +14,14 @@
       "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
     }[ch]));
 
+  async function csrfToken() {
+    const response = await fetch("/qweb/api/v1/auth/session", { credentials: "same-origin", cache: "no-store" });
+    if (!response.ok) throw new Error("无法读取登录会话");
+    const session = await response.json();
+    if (!session.csrf_token) throw new Error("请登录七七");
+    return session.csrf_token;
+  }
+
   function toast(message, error = false) {
     const node = $("toast");
     node.textContent = message;
@@ -23,21 +30,23 @@
     toast.timer = setTimeout(() => { node.className = "toast"; }, 2600);
   }
 
-  function withToken(url) {
-    if (!state.token) return url;
-    return url + (url.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(state.token);
-  }
-
   async function api(path, options = {}) {
+    const method = String(options.method || "GET").toUpperCase();
     const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
-    if (state.token) headers.Authorization = "Bearer " + state.token;
-    const response = await fetch(API + path, { ...options, headers });
+    if (method !== "GET" && method !== "HEAD") {
+      const token = await csrfToken();
+      if (token) headers["X-CSRF-Token"] = token;
+    }
+    const response = await fetch(API + path, {
+      ...options,
+      method,
+      headers,
+      credentials: "same-origin",
+    });
     let payload = null;
     try { payload = await response.json(); } catch (_) {}
     if (!response.ok) {
-      if (response.status === 401) {
-        toast("需要访问令牌，请在“接入设置”中填写", true);
-      }
+      if (response.status === 401) toast("QWeb 宿主未识别当前成员身份", true);
       throw new Error((payload && (payload.detail || payload.message)) || `HTTP ${response.status}`);
     }
     return payload;
@@ -46,14 +55,12 @@
   const titles = {
     market: ["市场总览", "指数、市场宽度与板块强弱"],
     stock: ["个股行情", "行情快照、K线与技术分析"],
-    chat: ["网页 AI", "用自然语言调用行情工具与图表"],
     artifacts: ["图表与报告", "已生成的 HTML 制品"],
-    settings: ["接入设置", "访问令牌、LLM 与 QWeb 接入"],
   };
 
   function showView(name) {
     state.view = name;
-    document.querySelectorAll(".nav-item").forEach((item) => {
+    document.querySelectorAll("[data-view]").forEach((item) => {
       item.classList.toggle("active", item.dataset.view === name);
     });
     document.querySelectorAll(".view").forEach((item) => {
@@ -64,7 +71,7 @@
     if (name === "artifacts") loadArtifacts();
   }
 
-  document.querySelectorAll(".nav-item").forEach((item) => {
+  document.querySelectorAll("[data-view]").forEach((item) => {
     item.addEventListener("click", () => showView(item.dataset.view));
   });
 
@@ -88,30 +95,24 @@
     return number.toFixed(2);
   }
 
-  async function loadHealth() {
-    try {
-      const info = await fetch(API + "/health").then((r) => r.json());
-      $("health-dot").className = "dot ok";
-      $("health-text").textContent = "服务在线 · v" + info.version;
-      $("health-sub").textContent = info.render_enabled ? "图片渲染已启用" : "HTML 模式（PNG 可选）";
-      const pill = $("llm-pill");
-      pill.textContent = info.llm_configured ? "LLM 已配置" : "LLM 未配置 · 可用命令模式";
-      pill.className = "pill " + (info.llm_configured ? "ok" : "bad");
-    } catch (error) {
-      $("health-dot").className = "dot bad";
-      $("health-text").textContent = "服务离线";
-      $("health-sub").textContent = String(error.message || error);
-    }
+  function artifactUrl(item) {
+    const suffix = String(item.mime || "").startsWith("image/") ? "png" : "html";
+    return `${MOUNT}/artifact/${item.id}.${suffix}`;
   }
 
-  async function loadMeta() {
+  async function loadHealth() {
     try {
-      const data = await api("/meta");
-      const list = $("tool-list");
-      list.innerHTML = (data.tools || []).slice(0, 12).map((tool) =>
-        `<div title="${esc(tool.description)}">${esc(tool.name)}</div>`
-      ).join("");
-    } catch (_) { /* token may not be set yet */ }
+      const info = await api("/health");
+      $("health-dot").className = "dot ok";
+      $("health-text").textContent = "QWeb 宿主在线 · v" + info.version;
+      $("health-sub").textContent = info.render_enabled ? "图片渲染已启用" : "HTML 模式（PNG 可选）";
+      $("host-pill").textContent = "QWeb 宿主";
+      $("host-pill").className = "pill ok";
+    } catch (error) {
+      $("health-dot").className = "dot bad";
+      $("health-text").textContent = "QWeb 宿主未授权";
+      $("health-sub").textContent = String(error.message || error);
+    }
   }
 
   async function loadOverview() {
@@ -168,7 +169,7 @@
   }
 
   $("open-overview-chart").addEventListener("click", () => {
-    window.open(withToken("/sayustock/api/chart/html?type=overview"), "_blank", "noopener");
+    window.open("api/chart/html?type=overview", "_blank", "noopener");
   });
 
   async function searchStock() {
@@ -201,10 +202,9 @@
       toast("行情查询失败：" + error.message, true);
     }
 
-    const chartQuery = chartType === "intraday" ? query : query;
-    const chartUrl = `/sayustock/api/chart/html?type=${chartType}&q=${encodeURIComponent(chartQuery)}&period=${encodeURIComponent(chartPeriod)}&ndays=${ndays}`;
-    $("chart-frame").src = withToken(chartUrl);
-    $("chart-open").href = withToken(chartUrl);
+    const chartUrl = `api/chart/html?type=${chartType}&q=${encodeURIComponent(query)}&period=${encodeURIComponent(chartPeriod)}&ndays=${ndays}`;
+    $("chart-frame").src = chartUrl;
+    $("chart-open").href = chartUrl;
     $("chart-title").textContent = query + " · " + period;
   }
 
@@ -240,139 +240,22 @@
     } catch (error) { toast("加入自选失败：" + error.message, true); }
   });
 
-  function addMessage(role, text, extras = {}) {
-    const wrap = document.createElement("div");
-    wrap.className = "msg " + role;
-    const bubble = document.createElement("div");
-    bubble.className = "bubble";
-    bubble.textContent = text;
-    if (extras.tools && extras.tools.length) {
-      const chips = document.createElement("div");
-      chips.className = "tool-chips";
-      chips.innerHTML = extras.tools.map((tool) =>
-        `<span class="tool-chip ${tool.status === "error" ? "error" : ""}">${esc(tool.name)} · ${esc(tool.status || "")}</span>`
-      ).join("");
-      bubble.appendChild(chips);
-    }
-    if (extras.images && extras.images.length) {
-      const images = document.createElement("div");
-      images.className = "msg-images";
-      images.innerHTML = extras.images.map((src) => `<img src="${esc(src)}" alt="SayuStock chart">`).join("");
-      bubble.appendChild(images);
-    }
-    if (extras.artifacts && extras.artifacts.length) {
-      for (const artifact of extras.artifacts) {
-        const card = document.createElement("div");
-        card.className = "artifact-card";
-        card.innerHTML = `已生成 <b>${esc(artifact.title || artifact.id)}</b> · <a href="${esc(withToken(artifact.url))}" target="_blank" rel="noopener">打开 HTML 制品</a>`;
-        bubble.appendChild(card);
-      }
-    }
-    wrap.appendChild(bubble);
-    $("messages").appendChild(wrap);
-    $("messages").scrollTop = $("messages").scrollHeight;
-  }
-
-  async function sendChat() {
-    const input = $("chat-input");
-    const message = input.value.trim();
-    if (!message) return;
-    input.value = "";
-    addMessage("user", message);
-    state.history.push({ role: "user", content: message });
-    const thinking = document.createElement("div");
-    thinking.className = "msg assistant";
-    thinking.innerHTML = `<div class="bubble">正在调用工具与模型…</div>`;
-    $("messages").appendChild(thinking);
-    $("messages").scrollTop = $("messages").scrollHeight;
-
-    try {
-      const payload = await api("/chat", {
-        method: "POST",
-        body: JSON.stringify({ message, history: state.history.slice(-20) }),
-      });
-      thinking.remove();
-      addMessage("assistant", payload.reply || "（无文本回复）", {
-        tools: payload.tool_calls || [],
-        images: payload.images || [],
-        artifacts: payload.artifacts || [],
-      });
-      if (payload.reply) state.history.push({ role: "assistant", content: payload.reply });
-      if (payload.llm_configured === false) {
-        toast("当前为命令模式；配置 LLM 后可自由对话");
-      }
-    } catch (error) {
-      thinking.remove();
-      addMessage("assistant", "请求失败：" + error.message + "\n可在“接入设置”里检查令牌与 LLM 配置。");
-    }
-  }
-
-  $("chat-send").addEventListener("click", sendChat);
-  $("chat-input").addEventListener("keydown", (event) => {
-    if (event.key === "Enter" && !event.shiftKey) {
-      event.preventDefault();
-      sendChat();
-    }
-  });
-  $("chat-clear").addEventListener("click", () => {
-    state.history = [];
-    $("messages").innerHTML = "";
-    addMessage("assistant", "对话已清空。可以继续问行情或让我出图。");
-  });
-
   async function loadArtifacts() {
     try {
       const payload = await api("/artifacts");
       const items = payload.items || [];
       $("artifact-grid").innerHTML = items.map((item) => {
-        const url = item.mime && item.mime.startsWith("image/")
-          ? `/sayustock/artifact/${item.id}.png`
-          : `/sayustock/artifact/${item.id}.html`;
         const time = item.created_at ? new Date(item.created_at * 1000).toLocaleString() : "";
         return `<div class="artifact-item">
           <b>${esc(item.title || item.id)}</b>
           <span>${esc(item.kind || "")} · ${esc(time)}</span>
-          <a href="${esc(withToken(url))}" target="_blank" rel="noopener">打开 →</a>
+          <a href="${esc(artifactUrl(item))}" target="_blank" rel="noopener">打开 →</a>
         </div>`;
       }).join("") || `<p class="hint">还没有制品。让 AI 画一张图或写一份报告吧。</p>`;
     } catch (error) {
       toast("制品加载失败：" + error.message, true);
     }
   }
-
-  function loadSettings() {
-    $("token-input").value = state.token;
-    api("/config").then((data) => {
-      const llm = data.llm || {};
-      $("llm-base").value = llm.base_url || "";
-      $("llm-model").value = llm.model || "";
-      $("llm-key").value = "";
-    }).catch(() => {});
-  }
-
-  $("save-token").addEventListener("click", () => {
-    state.token = $("token-input").value.trim();
-    localStorage.setItem("sayustock_token", state.token);
-    toast(state.token ? "令牌已保存" : "已清除令牌");
-    loadMeta();
-    loadOverview();
-  });
-
-  $("save-llm").addEventListener("click", async () => {
-    const llm = {
-      base_url: $("llm-base").value.trim(),
-      model: $("llm-model").value.trim(),
-    };
-    const key = $("llm-key").value.trim();
-    if (key) llm.api_key = key;
-    try {
-      await api("/config", { method: "POST", body: JSON.stringify({ llm }) });
-      toast("LLM 配置已保存，下一次对话生效");
-      loadHealth();
-    } catch (error) {
-      toast("保存失败（需要访问令牌）：" + error.message, true);
-    }
-  });
 
   $("refresh-btn").addEventListener("click", () => {
     loadHealth();
@@ -383,11 +266,8 @@
   });
 
   async function boot() {
-    if (state.token) localStorage.setItem("sayustock_token", state.token);
     await loadHealth();
-    await loadMeta();
     await loadOverview();
-    loadSettings();
   }
 
   boot();

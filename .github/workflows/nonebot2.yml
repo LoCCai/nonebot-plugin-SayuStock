@@ -2,7 +2,7 @@ name: NoneBot2 branch
 
 on:
   push:
-    branches: [nonebot2]
+    branches: [nonebot2, qiqi]
   pull_request:
     paths:
       - "nonebot_plugin_sayustock/**"

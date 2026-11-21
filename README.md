@@ -1,18 +1,20 @@
 # SayuStock
 
-> ## 🌿 当前分支：`nonebot2`
+> ## 🌿 当前分支：`qiqi`
 >
-> 本分支把 SayuStock 改造为**可独立安装的 NoneBot2 插件**，支持
-> **OneBot v11 / OneBot v12 / QQ 官方机器人**，并接入：
+> 本分支把 SayuStock 作为 **QWeb / NoneBot2 数据与图表插件** 使用，支持
+> **OneBot v11 / OneBot v12 / QQ 官方机器人**：
 >
 > - 🧩 **PicMenu Next**：`PluginMetadata.extra.menu_data` 三级菜单
-> - 🤖 **MoEllmChats**：`sayustock_*` 强类型 ToolSpec（行情/技术分析/选股/图表/报告）
-> - 🕸️ **QWeb 网页基座**：`/sayustock` 页面、API、HTML 图表与网页 AI
+> - 🤖 **MoEllmChats**：群聊研究由宿主模型驱动，插件只提供 `sayustock_*` 股票工具
+> - 🕸️ **QWeb**：网页挂载在宿主 FastAPI 下，成员/管理员/CSRF 全部走
+>   `src.qi_web.dependencies`，对话使用宿主 `/qweb/chat` 与个人模型计费
 >
+> 插件**不再自带**模型、API Key、供应商、直连聊天或网页配置路由。
 > 快速开始见 **[docs/nonebot2.md](./docs/nonebot2.md)**。
 >
 > ```bash
-> pip install "nonebot-plugin-sayustock @ git+https://github.com/LoCCai/nonebot-plugin-SayuStock.git@nonebot2"
+> pip install "nonebot-plugin-sayustock @ git+https://github.com/LoCCai/nonebot-plugin-SayuStock.git@qiqi"
 > playwright install chromium
 > ```
 >

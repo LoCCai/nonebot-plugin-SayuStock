@@ -26,25 +26,10 @@ DEFAULTS: dict[str, Any] = {
         "timeout_seconds": 45,
         "cache_ttl_seconds": 120,
     },
+    # The page is only mounted when the QWeb host provides its auth dependencies.
     "web": {
         "enabled": True,
-        "token": "",
-        "allow_localhost": True,
         "public_base_url": "",
-        "max_chat_history": 24,
-    },
-    "llm": {
-        "base_url": "",
-        "api_key": "",
-        "model": "",
-        "temperature": 0.4,
-        "max_steps": 6,
-        "timeout_seconds": 90,
-        "system_prompt": (
-            "你是 SayuStock 的股票研究助手。优先调用工具获取实时行情、技术指标和板块数据，"
-            "不要编造价格或财务数字。需要图表时调用图表/报告工具，并在最终回答中用一两句话"
-            "指出图表结论。涉及投资风险时必须明确说明数据仅供研究、不构成投资建议。"
-        ),
     },
     "watchlist": {"max_items": 30},
 }
@@ -57,22 +42,14 @@ class PluginConfig(BaseModel):
 
     sayustock_data_dir: str | None = None
     sayustock_web_enabled: bool = True
-    sayustock_web_token: str = ""
     sayustock_public_base_url: str = ""
-    sayustock_llm_base_url: str = ""
-    sayustock_llm_api_key: str = ""
-    sayustock_llm_model: str = ""
     sayustock_render_enabled: bool = True
 
 
 _ENV_OVERRIDES: dict[str, tuple[str, str, type]] = {
     "market.provider_chain": ("SAYUSTOCK_MARKET_CHAIN", "market", "list"),
     "web.enabled": ("SAYUSTOCK_WEB_ENABLED", "web", "bool"),
-    "web.token": ("SAYUSTOCK_WEB_TOKEN", "web", "str"),
     "web.public_base_url": ("SAYUSTOCK_PUBLIC_BASE_URL", "web", "str"),
-    "llm.base_url": ("SAYUSTOCK_LLM_BASE_URL", "llm", "str"),
-    "llm.api_key": ("SAYUSTOCK_LLM_API_KEY", "llm", "str"),
-    "llm.model": ("SAYUSTOCK_LLM_MODEL", "llm", "str"),
     "render.enabled": ("SAYUSTOCK_RENDER_ENABLED", "render", "bool"),
 }
 

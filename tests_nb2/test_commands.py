@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from nonebot_plugin_sayustock import config
+import pytest
+
 from nonebot_plugin_sayustock.commands import split_command
 
 
@@ -11,9 +12,14 @@ def test_split_command_prefix_and_alias():
     assert split_command("随便聊聊")[0] == ""
 
 
-def test_llm_config_env(monkeypatch):
-    monkeypatch.setenv("SAYUSTOCK_LLM_BASE_URL", "https://example.test/v1")
-    monkeypatch.setenv("SAYUSTOCK_LLM_MODEL", "demo-model")
-    config.load_config(force=True)
-    assert config.get_value("llm.base_url") == "https://example.test/v1"
-    assert config.get_value("llm.model") == "demo-model"
+@pytest.mark.parametrize(
+    ("text", "intent"),
+    [
+        ("财务 600519", "financial"),
+        ("估值 pb 600519", "valuation"),
+        ("股票资讯", "news"),
+        ("资金排行", "rank"),
+    ],
+)
+def test_menu_commands_are_dispatchable(text, intent):
+    assert split_command(text)[0] == intent

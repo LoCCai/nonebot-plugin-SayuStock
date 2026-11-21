@@ -78,11 +78,11 @@ async def help_result() -> CommandResult:
     return CommandResult("\n".join(lines))
 
 
-async def overview_result() -> CommandResult:
+async def overview_result(*, owner: str = "", with_image: bool = True) -> CommandResult:
     runtime = get_runtime()
     data = await runtime.market.overview()
     html = overview_html(data)
-    image = await _render(html, 1280)
+    image = await _render(html, 1280) if with_image else None
     lines = [f"【A股大盘概览】{data.get('as_of', '')}"]
     for item in (data.get("indices") or [])[:6]:
         pct = item.get("change_pct")
@@ -101,13 +101,13 @@ async def overview_result() -> CommandResult:
     for warning in (data.get("warnings") or [])[:3]:
         lines.append(f"⚠ {warning}")
     text = "\n".join(lines)
-    artifact = create_html("A股大盘概览", html, kind="chart", meta={"command": "overview"})
+    artifact = create_html("A股大盘概览", html, kind="chart", owner=owner, meta={"command": "overview"})
     if image is None:
         return CommandResult(text + _artifact_link_note([artifact]), None, [artifact])
     return CommandResult(text + _artifact_link_note([artifact]), image, [artifact])
 
 
-async def stock_result(raw: str) -> CommandResult:
+async def stock_result(raw: str, *, owner: str = "", with_image: bool = True) -> CommandResult:
     runtime = get_runtime()
     from SayuStock.utils.stock_period import parse_stock_img_request
 
@@ -131,8 +131,8 @@ async def stock_result(raw: str) -> CommandResult:
         }
         period = period_map.get(period_code, "日k")
         html, width, title = await build_kline_html(runtime.market, content, period)
-        image = await _render(html, width)
-        artifact = create_html(title, html, kind="chart")
+        image = await _render(html, width) if with_image else None
+        artifact = create_html(title, html, kind="chart", owner=owner)
         text = f"【{title}】已生成 K 线图。" + _artifact_link_note([artifact])
         return CommandResult(text, image, [artifact])
     if sector.startswith("single-stock-ndays-"):
@@ -144,13 +144,13 @@ async def stock_result(raw: str) -> CommandResult:
         html, width, title = await build_multi_intraday_html(runtime.market, parts, ndays)
     else:
         html, width, title = await build_intraday_html(runtime.market, content, ndays)
-    image = await _render(html, width)
-    artifact = create_html(title, html, kind="chart")
+    image = await _render(html, width) if with_image else None
+    artifact = create_html(title, html, kind="chart", owner=owner)
     text = f"【{title}】" + _artifact_link_note([artifact])
     return CommandResult(text, image, [artifact])
 
 
-async def compare_result(raw: str) -> CommandResult:
+async def compare_result(raw: str, *, owner: str = "", with_image: bool = True) -> CommandResult:
     runtime = get_runtime()
     tokens = raw.replace("，", " ").split()
     period = "日k"
@@ -163,7 +163,7 @@ async def compare_result(raw: str) -> CommandResult:
     if len(tokens) < 2:
         return CommandResult("用法：对比个股 贵州茅台 五粮液 沪深300")
     html, width, title = await build_compare_html(runtime.market, tokens, period)
-    image = await _render(html, width)
+    image = await _render(html, width) if with_image else None
     data = await runtime.market.compare(tokens, period)
     lines = [f"【{title}】{period}"]
     for trace in data.get("traces") or []:
@@ -174,7 +174,7 @@ async def compare_result(raw: str) -> CommandResult:
         )
     text = "\n".join(lines)
     if image is None:
-        artifact = create_html(title, html, kind="chart")
+        artifact = create_html(title, html, kind="chart", owner=owner)
         return CommandResult(text + _artifact_link_note([artifact]), None, [artifact])
     return CommandResult(text, image)
 
@@ -447,7 +447,8 @@ async def report_result(ue: UnifiedEvent, raw: str) -> CommandResult:
         f"{symbol} 研究报告",
         html,
         kind="report",
-        meta={"user_id": ue.user_id, "session_id": ue.session_id},
+        owner=ue.user_id,
+        meta={"session_id": ue.session_id},
     )
     return CommandResult(
         f"【{symbol} 研究报告】技术评分 {technical.get('score'):+.3f}" + _artifact_link_note([artifact]),
@@ -494,15 +495,15 @@ async def execute(text: str, ue: UnifiedEvent) -> CommandResult:
     """Execute a command or a natural-language alias."""
     intent, arg, _ = split_command(text)
     if not intent:
-        return CommandResult("未识别该指令。发送“股票帮助”查看用法；网页 AI 需要先配置 LLM。")
+        return CommandResult("未识别该指令。发送“股票帮助”查看用法；网页 AI 由 QWeb 宿主提供。")
     if intent == "help":
         return await help_result()
     if intent == "overview":
-        return await overview_result()
+        return await overview_result(owner=ue.user_id, with_image=ue.platform != "qweb")
     if intent == "stock":
-        return await stock_result(arg)
+        return await stock_result(arg, owner=ue.user_id, with_image=ue.platform != "qweb")
     if intent == "compare":
-        return await compare_result(arg)
+        return await compare_result(arg, owner=ue.user_id, with_image=ue.platform != "qweb")
     if intent == "sector":
         kind = "concept" if "概念" in text else "industry"
         return await sector_result(kind)

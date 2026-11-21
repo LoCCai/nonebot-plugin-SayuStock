@@ -117,15 +117,16 @@ async def _chart_artifacts(
             title,
             html,
             kind="chart",
-            meta={"user_id": ctx.user_id, "session_id": ctx.session_id},
+            owner=ctx.user_id,
+            meta={"session_id": ctx.session_id},
         )
     ]
     image: bytes | None = None
-    if with_png and get_runtime().render_enabled:
+    if with_png and ctx.platform != "qweb" and get_runtime().render_enabled:
         try:
             async with get_runtime().render_lock:
                 image = await rasterize(html, width=width, scale=get_runtime().render_scale())
-            artifacts.append(create_png(title, image, meta={"user_id": ctx.user_id}))
+            artifacts.append(create_png(title, image, owner=ctx.user_id))
         except ChartRenderError as error:
             logger.info("[SayuStock] 图片渲染不可用，保留 HTML 制品: {}", error)
         except Exception as error:  # pragma: no cover - optional backend
@@ -408,7 +409,8 @@ async def generate_report_tool(
         title,
         html,
         kind="report",
-        meta={"user_id": _tool_context.user_id, "session_id": _tool_context.session_id},
+        owner=_tool_context.user_id,
+        meta={"session_id": _tool_context.session_id},
     )
     return ToolOutcome(
         text=f"已生成 HTML 研究报告：{title}" + _artifact_note(_tool_context, [artifact]),
@@ -420,7 +422,7 @@ async def generate_report_tool(
 async def list_artifacts_tool(*, _tool_context: ToolContext) -> ToolOutcome:
     from ..artifacts import list_artifacts
 
-    items = list_artifacts(20)
+    items = list_artifacts(20, owner=_tool_context.user_id)
     text = (
         "暂无制品。"
         if not items
@@ -590,7 +592,8 @@ async def data_table_tool(
         title,
         html,
         kind="table",
-        meta={"user_id": _tool_context.user_id, "rows": len(normalized_rows)},
+        owner=_tool_context.user_id,
+        meta={"rows": len(normalized_rows)},
     )
     return ToolOutcome(
         text=f"【{title}】共 {len(normalized_rows)} 行" + _artifact_note(_tool_context, [artifact]),
@@ -884,7 +887,7 @@ register(
             "properties": {
                 "title": {"type": "string", "minLength": 1, "maxLength": 120},
                 "markdown": {"type": "string", "minLength": 1, "maxLength": 60000},
-                "meta": {"type": "object", "additionalProperties": {"type": "string"}},
+                "meta": {"type": "object", "properties": {}, "additionalProperties": {"type": "string"}},
             },
             "required": ["title", "markdown"],
             "additionalProperties": False,

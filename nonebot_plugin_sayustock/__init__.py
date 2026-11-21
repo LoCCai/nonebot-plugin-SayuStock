@@ -1,15 +1,16 @@
-"""SayuStock · NoneBot2 branch entry point.
+"""SayuStock · QWeb/NoneBot2 branch entry point.
 
 OneBot v11 / OneBot v12 / QQ official share one set of commands.  The plugin
-also exposes PicMenu Next metadata, MoEllmChats tools and a FastAPI web console
-under ``/sayustock``.
+exposes stock data/analysis tools to the host MoEllmChats runtime and a
+host-authenticated QWeb page under ``/qweb/sayustock``.  It does not own any model,
+API key, provider or chat route.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from nonebot import require, on_regex, get_driver, on_command, on_fullmatch
+from nonebot import require, get_driver, on_command
 from nonebot.log import logger
 from nonebot.params import CommandArg
 from nonebot.plugin import PluginMetadata
@@ -40,6 +41,10 @@ from .commands import (
     valuation_result,
 )
 from .platform import from_event
+
+# Host QWeb chat wiring is owned by the main controller; this flag advertises
+# that the stock tool surface is available for that wiring.
+QIQI_CHAT_TOOLS = True
 
 MOELLM_AVAILABLE = False
 try:
@@ -127,7 +132,7 @@ overview_matcher = on_command("大盘概览", aliases={"大盘", "市场概览",
 
 @overview_matcher.handle()
 async def _overview(bot: Bot, event: Event) -> None:
-    await _guard(bot, event, overview_result())
+    await _guard(bot, event, overview_result(owner=from_event(bot, event).user_id))
 
 
 stock_matcher = on_command("个股", aliases={"行情", "查行情"}, priority=5, block=True)
@@ -135,7 +140,7 @@ stock_matcher = on_command("个股", aliases={"行情", "查行情"}, priority=5
 
 @stock_matcher.handle()
 async def _stock(bot: Bot, event: Event, args: Any = CommandArg()) -> None:
-    await _guard(bot, event, stock_result(_arg_text(args)))
+    await _guard(bot, event, stock_result(_arg_text(args), owner=from_event(bot, event).user_id))
 
 
 compare_matcher = on_command("对比个股", aliases={"个股对比", "走势对比"}, priority=5, block=True)
@@ -143,7 +148,7 @@ compare_matcher = on_command("对比个股", aliases={"个股对比", "走势对
 
 @compare_matcher.handle()
 async def _compare(bot: Bot, event: Event, args: Any = CommandArg()) -> None:
-    await _guard(bot, event, compare_result(_arg_text(args)))
+    await _guard(bot, event, compare_result(_arg_text(args), owner=from_event(bot, event).user_id))
 
 
 sector_matcher = on_command("行业板块", aliases={"板块", "概念板块", "板块排行"}, priority=5, block=True)
@@ -211,6 +216,38 @@ async def _report(bot: Bot, event: Event, args: Any = CommandArg()) -> None:
     await _guard(bot, event, report_result(from_event(bot, event), _arg_text(args)))
 
 
+financial_matcher = on_command("财务", aliases={"财务分析", "基本面"}, priority=5, block=True)
+
+
+@financial_matcher.handle()
+async def _financial(bot: Bot, event: Event, args: Any = CommandArg()) -> None:
+    await _guard(bot, event, financial_result(_arg_text(args)))
+
+
+valuation_matcher = on_command("估值", aliases={"估值分析"}, priority=5, block=True)
+
+
+@valuation_matcher.handle()
+async def _valuation(bot: Bot, event: Event, args: Any = CommandArg()) -> None:
+    await _guard(bot, event, valuation_result(_arg_text(args)))
+
+
+news_matcher = on_command("股票资讯", aliases={"财经快讯", "快讯"}, priority=5, block=True)
+
+
+@news_matcher.handle()
+async def _news(bot: Bot, event: Event) -> None:
+    await _guard(bot, event, news_result())
+
+
+rank_matcher = on_command("资金排行", aliases={"排行榜", "榜单"}, priority=5, block=True)
+
+
+@rank_matcher.handle()
+async def _rank(bot: Bot, event: Event) -> None:
+    await _guard(bot, event, rank_result("main_inflow"))
+
+
 dispatcher = on_command("股票", aliases={"sayustock", "SayuStock"}, priority=5, block=True)
 
 
@@ -221,157 +258,6 @@ async def _dispatch(bot: Bot, event: Event, args: Any = CommandArg()) -> None:
         await _guard(bot, event, help_result())
         return
     await _guard(bot, event, execute(sub, from_event(bot, event)))
-
-
-# ---------------------------------------------------------------------------
-# Prefix-free exact commands
-# ---------------------------------------------------------------------------
-overview_plain = on_fullmatch(("大盘概览", "大盘"), priority=8, block=True)
-
-
-@overview_plain.handle()
-async def _plain_overview(bot: Bot, event: Event) -> None:
-    await _guard(bot, event, overview_result())
-
-
-help_plain = on_fullmatch(("股票帮助", "SayuStock帮助", "早柚股票", "股票菜单"), priority=8, block=True)
-
-
-@help_plain.handle()
-async def _plain_help(bot: Bot, event: Event) -> None:
-    await _guard(bot, event, help_result())
-
-
-sector_plain = on_fullmatch(("板块", "行业板块", "概念板块", "板块排行"), priority=8, block=True)
-
-
-@sector_plain.handle()
-async def _plain_sector(bot: Bot, event: Event) -> None:
-    kind = "concept" if "概念" in event.get_plaintext() else "industry"
-    await _guard(bot, event, sector_result(kind))
-
-
-mine_plain = on_fullmatch(("我的自选", "我的个股"), priority=8, block=True)
-
-
-@mine_plain.handle()
-async def _plain_mine(bot: Bot, event: Event) -> None:
-    await _guard(bot, event, my_watch(from_event(bot, event)))
-
-
-news_plain = on_fullmatch(("股票资讯", "财经快讯", "快讯"), priority=8, block=True)
-
-
-@news_plain.handle()
-async def _plain_news(bot: Bot, event: Event) -> None:
-    await _guard(bot, event, news_result())
-
-
-rank_plain = on_fullmatch(("资金排行", "排行榜", "榜单"), priority=8, block=True)
-
-
-@rank_plain.handle()
-async def _plain_rank(bot: Bot, event: Event) -> None:
-    await _guard(bot, event, rank_result("main_inflow"))
-
-
-clear_plain = on_fullmatch(("清空自选",), priority=8, block=True)
-
-
-@clear_plain.handle()
-async def _plain_clear(bot: Bot, event: Event) -> None:
-    await _guard(bot, event, clear_watch(from_event(bot, event)))
-
-
-# ---------------------------------------------------------------------------
-# Prefix-free parameterized commands
-# ---------------------------------------------------------------------------
-stock_plain = on_regex(r"^/?\s*(?:个股|行情|查行情)\s+\S+", priority=9, block=True)
-financial_plain = on_regex(r"^/?\s*(?:财务|财务分析|基本面)\s+\S+", priority=9, block=True)
-
-
-@financial_plain.handle()
-async def _plain_financial(bot: Bot, event: Event) -> None:
-    raw = event.get_plaintext().strip().lstrip("/")
-    _, _, arg = raw.partition(" ")
-    await _guard(bot, event, financial_result(arg.strip()))
-
-
-valuation_plain = on_regex(r"^/?\s*(?:估值|估值分析)\s+\S+", priority=9, block=True)
-
-
-@valuation_plain.handle()
-async def _plain_valuation(bot: Bot, event: Event) -> None:
-    raw = event.get_plaintext().strip().lstrip("/")
-    _, _, arg = raw.partition(" ")
-    await _guard(bot, event, valuation_result(arg.strip()))
-
-
-@stock_plain.handle()
-async def _plain_stock(bot: Bot, event: Event) -> None:
-    raw = event.get_plaintext().strip().lstrip("/")
-    _, _, arg = raw.partition(" ")
-    await _guard(bot, event, stock_result(arg.strip()))
-
-
-compare_plain = on_regex(r"^/?\s*(?:对比个股|个股对比|走势对比)\s+\S+", priority=9, block=True)
-
-
-@compare_plain.handle()
-async def _plain_compare(bot: Bot, event: Event) -> None:
-    raw = event.get_plaintext().strip().lstrip("/")
-    _, _, arg = raw.partition(" ")
-    await _guard(bot, event, compare_result(arg.strip()))
-
-
-technical_plain = on_regex(r"^/?\s*(?:技术分析|股票分析)\s+\S+", priority=9, block=True)
-
-
-@technical_plain.handle()
-async def _plain_technical(bot: Bot, event: Event) -> None:
-    raw = event.get_plaintext().strip().lstrip("/")
-    _, _, arg = raw.partition(" ")
-    await _guard(bot, event, technical_result(arg.strip()))
-
-
-screen_plain = on_regex(r"^/?\s*(?:自动选股|选股|条件选股)\s+\S+", priority=9, block=True)
-
-
-@screen_plain.handle()
-async def _plain_screen(bot: Bot, event: Event) -> None:
-    raw = event.get_plaintext().strip().lstrip("/")
-    _, _, arg = raw.partition(" ")
-    await _guard(bot, event, screen_result(arg.strip()))
-
-
-add_plain = on_regex(r"^/?\s*(?:添加自选|添加个股|加入自选|添加股票)\s+\S+", priority=9, block=True)
-
-
-@add_plain.handle()
-async def _plain_add(bot: Bot, event: Event) -> None:
-    raw = event.get_plaintext().strip().lstrip("/")
-    _, _, arg = raw.partition(" ")
-    await _guard(bot, event, add_watch(from_event(bot, event), arg.strip()))
-
-
-remove_plain = on_regex(r"^/?\s*(?:删除自选|删除个股|移除自选|删除股票)\s+\S+", priority=9, block=True)
-
-
-@remove_plain.handle()
-async def _plain_remove(bot: Bot, event: Event) -> None:
-    raw = event.get_plaintext().strip().lstrip("/")
-    _, _, arg = raw.partition(" ")
-    await _guard(bot, event, remove_watch(from_event(bot, event), arg.strip()))
-
-
-report_plain = on_regex(r"^/?\s*(?:股票报告|研报|股票研报)\s+\S+", priority=9, block=True)
-
-
-@report_plain.handle()
-async def _plain_report(bot: Bot, event: Event) -> None:
-    raw = event.get_plaintext().strip().lstrip("/")
-    _, _, arg = raw.partition(" ")
-    await _guard(bot, event, report_result(from_event(bot, event), arg.strip()))
 
 
 # ---------------------------------------------------------------------------
@@ -392,9 +278,11 @@ async def _sayustock_startup() -> None:
         app = getattr(driver, "server_app", None)
         if app is not None:
             if mount_webui(app):
-                logger.info("[SayuStock] WebUI mounted at /sayustock/")
+                logger.info("[SayuStock] QWeb 页面已挂载到 /qweb/sayustock/")
+            else:
+                logger.warning("[SayuStock] 未检测到 QWeb 宿主，网页默认不启用")
         else:
-            logger.warning("[SayuStock] 当前 driver 无 server_app，跳过 WebUI 挂载")
+            logger.warning("[SayuStock] 当前 driver 无 server_app，跳过 QWeb 页面挂载")
 
     try:
         from .ai import moellm_bridge
@@ -415,4 +303,4 @@ async def _sayustock_shutdown() -> None:
         pass
 
 
-__all__ = ["__plugin_meta__", "__version__", "MENU_DATA"]
+__all__ = ["QIQI_CHAT_TOOLS", "__plugin_meta__", "__version__", "MENU_DATA"]

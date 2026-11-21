@@ -8,13 +8,15 @@ import time
 import secrets
 from typing import Any
 from pathlib import Path
-from dataclasses import asdict, dataclass
+from threading import Lock
+from dataclasses import field, asdict, dataclass
 
 from .paths import ARTIFACT_DIR
 
 _ID_RE = re.compile(r"^[a-f0-9]{12}$")
 _MAX_AGE_SECONDS = 14 * 24 * 3600
 _MAX_ARTIFACTS = 500
+_index_lock = Lock()
 
 
 @dataclass(slots=True)
@@ -25,7 +27,8 @@ class Artifact:
     mime: str
     created_at: float
     size: int
-    meta: dict[str, Any]
+    meta: dict[str, Any] = field(default_factory=dict)
+    owner: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -66,6 +69,18 @@ def _cleanup(index: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
     return kept
 
 
+def _record_owner(record: dict[str, Any]) -> str:
+    owner = record.get("owner")
+    if isinstance(owner, str) and owner:
+        return owner
+    meta = record.get("meta")
+    if isinstance(meta, dict):
+        value = meta.get("owner")
+        if isinstance(value, str):
+            return value
+    return ""
+
+
 def create_artifact(
     *,
     title: str,
@@ -73,6 +88,7 @@ def create_artifact(
     mime: str,
     payload: bytes,
     suffix: str,
+    owner: str = "",
     meta: dict[str, Any] | None = None,
 ) -> Artifact:
     """Persist a new artifact and return its public descriptor."""
@@ -88,12 +104,14 @@ def create_artifact(
         "mime": mime,
         "created_at": time.time(),
         "size": len(payload),
+        "owner": owner,
         "meta": meta or {},
         "suffix": suffix,
     }
-    index = _cleanup(_load_index())
-    index[artifact_id] = record
-    _save_index(index)
+    with _index_lock:
+        index = _load_index()
+        index[artifact_id] = record
+        _save_index(_cleanup(index))
     return Artifact(
         id=artifact_id,
         title=title,
@@ -102,36 +120,55 @@ def create_artifact(
         created_at=record["created_at"],
         size=len(payload),
         meta=meta or {},
+        owner=owner,
     )
 
 
-def create_html(title: str, html: str, *, kind: str = "report", meta: dict[str, Any] | None = None) -> Artifact:
+def create_html(
+    title: str,
+    html: str,
+    *,
+    kind: str = "report",
+    owner: str = "",
+    meta: dict[str, Any] | None = None,
+) -> Artifact:
     return create_artifact(
         title=title,
         kind=kind,
         mime="text/html; charset=utf-8",
         payload=html.encode("utf-8"),
         suffix=".html",
+        owner=owner,
         meta=meta,
     )
 
 
-def create_png(title: str, image: bytes, *, meta: dict[str, Any] | None = None) -> Artifact:
+def create_png(
+    title: str,
+    image: bytes,
+    *,
+    owner: str = "",
+    meta: dict[str, Any] | None = None,
+) -> Artifact:
     return create_artifact(
         title=title,
         kind="chart",
         mime="image/png",
         payload=image,
         suffix=".png",
+        owner=owner,
         meta=meta,
     )
 
 
-def get_artifact(artifact_id: str) -> tuple[Artifact, Path] | None:
+def get_artifact(artifact_id: str, *, owner: str | None = None) -> tuple[Artifact, Path] | None:
     if not _ID_RE.fullmatch(artifact_id or ""):
         return None
     record = _load_index().get(artifact_id)
     if not record:
+        return None
+    record_owner = _record_owner(record)
+    if owner is not None and record_owner != owner:
         return None
     suffix = str(record.get("suffix") or ".html")
     path = ARTIFACT_DIR / f"{artifact_id}{suffix}"
@@ -146,26 +183,37 @@ def get_artifact(artifact_id: str) -> tuple[Artifact, Path] | None:
             created_at=float(record.get("created_at") or 0),
             size=int(record.get("size") or 0),
             meta=record.get("meta") if isinstance(record.get("meta"), dict) else {},
+            owner=record_owner,
         ),
         path,
     )
 
 
-def list_artifacts(limit: int = 30) -> list[dict[str, Any]]:
-    index = _cleanup(_load_index())
+def list_artifacts(limit: int = 30, *, owner: str | None = None) -> list[dict[str, Any]]:
+    index = _load_index()
+    cutoff = time.time() - _MAX_AGE_SECONDS
+    index = {key: row for key, row in index.items() if row["created_at"] >= cutoff}
     ordered = sorted(index.values(), key=lambda value: value.get("created_at", 0), reverse=True)
-    return [
-        {
-            "id": item.get("id"),
-            "title": item.get("title"),
-            "kind": item.get("kind"),
-            "mime": item.get("mime"),
-            "size": item.get("size"),
-            "created_at": item.get("created_at"),
-            "meta": item.get("meta") or {},
-        }
-        for item in ordered[: max(1, min(limit, 200))]
-    ]
+    items: list[dict[str, Any]] = []
+    for item in ordered:
+        record_owner = _record_owner(item)
+        if owner is not None and record_owner != owner:
+            continue
+        items.append(
+            {
+                "id": item.get("id"),
+                "title": item.get("title"),
+                "kind": item.get("kind"),
+                "mime": item.get("mime"),
+                "size": item.get("size"),
+                "created_at": item.get("created_at"),
+                "owner": record_owner,
+                "meta": item.get("meta") or {},
+            }
+        )
+        if len(items) >= max(1, min(limit, 200)):
+            break
+    return items
 
 
 __all__ = [

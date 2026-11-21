@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "nonebot-plugin-sayustock"
 version = "0.9.0"
-description = "SayuStock for NoneBot2: A股行情、K线、板块、技术分析、PicMenu Next、MoEllmChats 工具与 QWeb 网页 AI 基座"
+description = "SayuStock for QWeb/NoneBot2: A股行情、K线、板块、技术分析、MoEllmChats 工具与宿主鉴权的 QWeb 股票页"
 authors = [
   { name = "LoCCai" },
   { name = "KimigaiiWuyi", email = "444835641@qq.com" },

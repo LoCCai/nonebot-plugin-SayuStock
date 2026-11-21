@@ -5,10 +5,10 @@ from __future__ import annotations
 from typing import Any
 
 PLUGIN_NAME = "SayuStock"
-PLUGIN_VERSION = "0.9.0-nb2.1"
+PLUGIN_VERSION = "0.9.0-qiqi.1"
 PLUGIN_HOMEPAGE = "https://github.com/LoCCai/nonebot-plugin-SayuStock"
 PLUGIN_DESCRIPTION = (
-    "A股/港股/美股/ETF 行情、K线、分时、板块云图、技术分析、条件选股、自选管理、HTML 图表/研究报告与网页 AI。"
+    "A股/港股/美股/ETF 行情、K线、分时、板块云图、技术分析、条件选股、自选管理、HTML 图表/研究报告与宿主 QWeb 股票页。"
 )
 
 USAGE = """股票帮助 / SayuStock帮助：查看命令
@@ -20,7 +20,7 @@ USAGE = """股票帮助 / SayuStock帮助：查看命令
 自动选股 市值50-200 PE<30 涨跌幅>2：条件选股
 添加自选 600519 / 删除自选 600519 / 我的自选 / 清空自选
 股票报告 贵州茅台：生成 HTML 研究报告
-网页入口：/sayustock/（需在配置中启用并设置访问令牌）"""
+网页入口：由 QWeb 宿主挂载 /qweb/sayustock/，登录、模型与计费均使用宿主账户"""
 
 MENU_DATA: list[dict[str, Any]] = [
     {
@@ -82,7 +82,7 @@ MENU_DATA: list[dict[str, Any]] = [
         "trigger_method": "消息触发",
         "trigger_condition": "添加自选 / 删除自选 / 我的自选 / 清空自选",
         "brief_des": "按用户隔离的自选股增删查",
-        "detail_des": "自选按平台、Bot 与用户隔离存储，网页端与 Bot 端共享同一份数据。",
+        "detail_des": "自选按平台、Bot 与用户隔离存储；网页端按宿主账户隔离。",
         "llm_intents": ["加入自选", "删掉自选", "我的自选股", "关注这只"],
     },
     {
@@ -115,18 +115,21 @@ MENU_DATA: list[dict[str, Any]] = [
         "trigger_condition": "sayustock_plot_series / sayustock_pie_chart / sayustock_data_table",
         "brief_des": "把任意分析序列、占比或表格渲染为 HTML/PNG",
         "detail_des": (
-            "面向网页 AI 与 MoEllmChats 的数据可视化工具：折线/柱状/饼图、"
+            "面向宿主网页与 MoEllmChats 的数据可视化工具：折线/柱状/饼图、"
             "描述统计、相关系数矩阵与表格报告，不限于行情数据。"
         ),
         "llm_intents": ["画个图", "做个表格", "分析这组数据", "相关性", "占比图"],
     },
     {
-        "func": "网页 AI",
+        "func": "QWeb 股票页",
         "trigger_method": "网页触发",
-        "trigger_condition": "/sayustock/ 页面中的 AI 对话",
-        "brief_des": "在网页中调用同一套行情工具与 LLM，直接查看图表与 HTML 制品",
-        "detail_des": ("网页 AI 与 MoEllmChats 共享 ToolSpec 数据工具；支持 K线/分时/对比/概览图表和 HTML 报告渲染。"),
-        "llm_intents": ["网页里问股票", "网页AI分析", "在网页看图表"],
+        "trigger_condition": "QWeb 宿主挂载的 /qweb/sayustock/ 页面",
+        "brief_des": "在宿主网页查看行情、图表与报告；对话交给宿主 /qweb/chat",
+        "detail_des": (
+            "页面只负责行情、图表、报告和股票工具，不保存模型密钥；"
+            "成员身份与管理权限来自 QWeb 宿主，对话模型和计费由宿主账户承担。"
+        ),
+        "llm_intents": ["网页里问股票", "网页看行情", "在网页看图表"],
     },
 ]
 

@@ -1,20 +1,18 @@
-"""Web console package."""
+"""QWeb page package."""
 
 from __future__ import annotations
 
-import secrets
-
+from .api import ROUTER_PREFIX, get_router, mount_webui
+from .host import WebAccount, HostDependencies, load_host_dependencies
 from ..paths import STATIC_DIR, TEMPLATES_DIR
 
-ASSET_TOKEN = secrets.token_urlsafe(18)
-
-from .api import ROUTER_PREFIX, get_router, mount_webui  # noqa: E402
-
 __all__ = [
-    "ASSET_TOKEN",
+    "HostDependencies",
     "ROUTER_PREFIX",
     "STATIC_DIR",
     "TEMPLATES_DIR",
+    "WebAccount",
     "get_router",
+    "load_host_dependencies",
     "mount_webui",
 ]

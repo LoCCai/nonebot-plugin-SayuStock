@@ -19,3 +19,10 @@ def test_menu_extra_has_version_and_pmn():
     assert extra["author"]
     assert extra["pmn"]["inherit_func_template"] is True
     assert extra["menu_data"] is MENU_DATA
+
+
+def test_menu_does_not_advertise_plugin_owned_web_ai():
+    joined = " ".join(str(item) for item in MENU_DATA)
+    assert "SAYUSTOCK_WEB_TOKEN" not in joined
+    assert "访问令牌" not in joined
+    assert any(item["func"] == "QWeb 股票页" for item in MENU_DATA)

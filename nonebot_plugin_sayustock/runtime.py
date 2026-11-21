@@ -56,7 +56,7 @@ def set_runtime(runtime: Runtime | None) -> None:
 
 def artifact_url(artifact: Artifact, *, public_base_url: str = "") -> str:
     base = (public_base_url or "").rstrip("/")
-    prefix = f"{base}/sayustock" if base else "/sayustock"
+    prefix = f"{base}/qweb/sayustock"
     if artifact.mime.startswith("image/"):
         return f"{prefix}/artifact/{artifact.id}.png"
     return f"{prefix}/artifact/{artifact.id}.html"

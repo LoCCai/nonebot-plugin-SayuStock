@@ -1,22 +1,34 @@
-"""FastAPI router for the SayuStock web console / QWeb base."""
+"""FastAPI router for the SayuStock page embedded by the QWeb host.
+
+There is deliberately no plugin-owned login, token, admin header or LLM route.
+Membership/admin/CSRF all come from the host dependencies; the host account's
+``qq`` is the only identity the router will use.  Private artifacts are served
+only to their owner.
+"""
 
 from __future__ import annotations
 
 import time
 from typing import Any
 
-from fastapi import Body, Query, Request, APIRouter, HTTPException
+from fastapi import Body, Query, Depends, Request, APIRouter, HTTPException
 from fastapi.responses import Response, FileResponse, HTMLResponse, RedirectResponse
 
-from . import STATIC_DIR, ASSET_TOKEN, TEMPLATES_DIR
+from .host import (
+    CSRF_HEADER,
+    HOST_DEPENDENCIES_MODULE,
+    WebAccount,
+    HostDependencies,
+    WebIdentityError,
+    load_host_dependencies,
+)
 from ..menu import MENU_DATA, PLUGIN_NAME, PLUGIN_VERSION, PLUGIN_HOMEPAGE, PLUGIN_DESCRIPTION
-from ..ai.llm import LLMError, chat, configured
-from ..config import get_value, load_config, update_config
-from ..runtime import get_runtime, artifact_url
-from ..ai.tools import TOOLS
+from ..paths import STATIC_DIR, TEMPLATES_DIR
+from ..runtime import get_runtime
+from ..ai.tools import TOOLS, run_tool
 from ..commands import execute
 from ..platform import UnifiedEvent
-from ..artifacts import get_artifact, list_artifacts
+from ..artifacts import Artifact, get_artifact, list_artifacts
 from ..ai.contracts import ToolContext
 from ..services.charts import (
     ChartRenderError,
@@ -28,77 +40,30 @@ from ..services.charts import (
     build_multi_intraday_html,
 )
 
-ROUTER_PREFIX = "/sayustock"
+ROUTER_PREFIX = "/qweb/sayustock"
 
 
-def _bearer(request: Request) -> str:
-    header = request.headers.get("authorization", "")
-    if header.lower().startswith("bearer "):
-        return header[7:].strip()
-    return request.headers.get("x-sayustock-token", "").strip() or request.query_params.get("token", "").strip()
+def _mount_path(request: Request) -> str:
+    root = str(request.scope.get("root_path") or "").rstrip("/")
+    return f"{root}{ROUTER_PREFIX}"
 
 
-def _authorized(request: Request) -> bool:
-    expected = str(get_value("web.token", "") or "").strip()
-    if not expected:
-        if bool(get_value("web.allow_localhost", True)) and request.client:
-            return request.client.host in {"127.0.0.1", "::1", "localhost"}
-        return True
-    supplied = _bearer(request)
-    if supplied == expected:
-        return True
-    if request.headers.get("x-qweb-admin") == "1" and str(get_value("web.trust_qweb", False)).lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }:
-        return True
-    return False
-
-
-def _require(request: Request) -> None:
-    if not _authorized(request):
-        raise HTTPException(status_code=401, detail="无效的 SayuStock 访问令牌")
-
-
-def _web_context(request: Request) -> ToolContext:
-    user = (
-        request.headers.get("x-qweb-user", "").strip()
-        or request.headers.get("x-forwarded-user", "").strip()
-        or "web-guest"
-    )
-    session = request.headers.get("x-qweb-session", "").strip() or f"web:{user}"
-    return ToolContext(platform="web", user_id=user, session_id=session, bot_id="web")
-
-
-def _watch_key(ctx: ToolContext) -> str:
-    from ..watchlist import owner_key
-
-    return owner_key(platform="web", bot_id="web", user_id=ctx.user_id)
-
-
-def _artifact_payload(request: Request, artifact: Any) -> dict[str, Any]:
-    base = str(get_value("web.public_base_url", "") or "")
-    if isinstance(artifact, dict):
-        artifact_id = artifact.get("id")
-        title = artifact.get("title")
-        kind = artifact.get("kind")
-        mime = artifact.get("mime")
-        prefix = f"{base}/sayustock" if base else "/sayustock"
-        url = (
-            f"{prefix}/artifact/{artifact_id}.png"
-            if str(mime or "").startswith("image/")
-            else f"{prefix}/artifact/{artifact_id}.html"
-        )
-        return {"id": artifact_id, "title": title, "kind": kind, "mime": mime, "url": url}
+def _artifact_payload(request: Request, artifact: Artifact) -> dict[str, Any]:
+    suffix = "png" if artifact.mime.startswith("image/") else "html"
     return {
         "id": artifact.id,
         "title": artifact.title,
         "kind": artifact.kind,
         "mime": artifact.mime,
-        "url": artifact_url(artifact, public_base_url=base),
+        "owner": artifact.owner,
+        "url": f"{_mount_path(request)}/artifact/{artifact.id}.{suffix}",
     }
+
+
+def _watch_key(account: WebAccount) -> str:
+    from ..watchlist import owner_key
+
+    return owner_key(platform="qweb", bot_id="qweb", user_id=account.qq)
 
 
 def _fit_chart_html(html: str) -> str:
@@ -132,26 +97,60 @@ def _fit_chart_html(html: str) -> str:
     return html + script
 
 
-def get_router() -> APIRouter:
+def _unavailable_router() -> APIRouter:
     router = APIRouter()
 
+    async def unavailable(path: str = "") -> Any:
+        raise HTTPException(
+            status_code=503,
+            detail=f"SayuStock 网页未启用：未找到 QWeb 宿主依赖 {HOST_DEPENDENCIES_MODULE}",
+        )
+
+    router.add_api_route(ROUTER_PREFIX, unavailable, methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
+    router.add_api_route(
+        f"{ROUTER_PREFIX}/{{path:path}}",
+        unavailable,
+        methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+    )
+    return router
+
+
+def _build_router(host: HostDependencies) -> APIRouter:
+    router = APIRouter()
+
+    async def member(account: Any = Depends(host.require_membership)) -> WebAccount:
+        try:
+            return WebAccount.from_host(account)
+        except WebIdentityError as error:
+            raise HTTPException(status_code=401, detail=str(error)) from error
+
+    async def admin(account: Any = Depends(host.admin_account)) -> WebAccount:
+        try:
+            return WebAccount.from_host(account)
+        except WebIdentityError as error:
+            raise HTTPException(status_code=403, detail=str(error)) from error
+
+    async def csrf_guard(request: Request, _: Any = Depends(host.csrf_protected)) -> None:
+        if not request.headers.get(CSRF_HEADER, "").strip():
+            raise HTTPException(status_code=403, detail=f"缺少 {CSRF_HEADER}")
+
     @router.get(f"{ROUTER_PREFIX}", include_in_schema=False)
-    async def root() -> Any:
+    async def root(_account: WebAccount = Depends(member)) -> Any:
         return RedirectResponse(url=f"{ROUTER_PREFIX}/")
 
     @router.get(f"{ROUTER_PREFIX}/embed", include_in_schema=False)
-    async def embed() -> Any:
+    async def embed(_account: WebAccount = Depends(member)) -> Any:
         return RedirectResponse(url=f"{ROUTER_PREFIX}/?embed=1")
 
     @router.get(f"{ROUTER_PREFIX}/", include_in_schema=False)
-    async def index() -> Any:
+    async def index(_account: WebAccount = Depends(member)) -> Any:
         path = TEMPLATES_DIR / "index.html"
         if not path.is_file():
             return HTMLResponse("<h1>SayuStock</h1><p>前端页面缺失。</p>", status_code=404)
         return FileResponse(path, media_type="text/html; charset=utf-8")
 
     @router.get(f"{ROUTER_PREFIX}/static/{{path:path}}", include_in_schema=False)
-    async def static(path: str) -> Any:
+    async def static(path: str, _account: WebAccount = Depends(member)) -> Any:
         target = (STATIC_DIR / path).resolve()
         try:
             target.relative_to(STATIC_DIR.resolve())
@@ -170,65 +169,43 @@ def get_router() -> APIRouter:
         return FileResponse(target, media_type=media)
 
     @router.get(f"{ROUTER_PREFIX}/api/health")
-    async def health() -> Any:
+    async def health(_account: WebAccount = Depends(member)) -> Any:
         return {
             "ok": True,
             "name": PLUGIN_NAME,
             "version": PLUGIN_VERSION,
-            "llm_configured": configured(),
             "render_enabled": get_runtime().render_enabled,
             "render_backend": "nonebot-plugin-htmlrender",
             "time": time.time(),
         }
 
     @router.get(f"{ROUTER_PREFIX}/api/meta")
-    async def meta(request: Request) -> Any:
-        _require(request)
+    async def meta(request: Request, _account: WebAccount = Depends(member)) -> Any:
         return {
             "name": PLUGIN_NAME,
             "version": PLUGIN_VERSION,
             "description": PLUGIN_DESCRIPTION,
             "homepage": PLUGIN_HOMEPAGE,
-            "llm_configured": configured(),
+            "mount": _mount_path(request),
             "tools": [
-                {"name": item.name, "description": item.description, "effect": item.effect} for item in TOOLS.values()
+                {
+                    "name": item.name,
+                    "description": item.description,
+                    "effect": item.effect,
+                    "permission": item.permission,
+                }
+                for item in TOOLS.values()
             ],
             "qweb": {
-                "mount": ROUTER_PREFIX,
-                "asset_token": ASSET_TOKEN,
+                "host": HOST_DEPENDENCIES_MODULE,
+                "chat": "/qweb/chat",
+                "csrf_header": CSRF_HEADER,
                 "embed": True,
             },
         }
 
-    @router.get(f"{ROUTER_PREFIX}/api/config")
-    async def read_config(request: Request) -> Any:
-        _require(request)
-        data = load_config()
-        llm = dict(data.get("llm") or {})
-        if llm.get("api_key"):
-            llm["api_key"] = "***"
-        data["llm"] = llm
-        return data
-
-    @router.post(f"{ROUTER_PREFIX}/api/config")
-    async def write_config(request: Request, patch: dict[str, Any] = Body(...)) -> Any:
-        _require(request)
-        if request.client and request.client.host not in {"127.0.0.1", "::1"}:
-            if str(get_value("web.token", "") or "").strip() == "":
-                raise HTTPException(status_code=403, detail="写入配置需要先设置访问令牌")
-        safe_patch = {
-            key: value for key, value in patch.items() if key in {"market", "render", "web", "llm", "watchlist"}
-        }
-        updated = update_config(safe_patch)
-        llm = dict(updated.get("llm") or {})
-        if llm.get("api_key"):
-            llm["api_key"] = "***"
-        updated["llm"] = llm
-        return {"ok": True, "config": updated}
-
     @router.get(f"{ROUTER_PREFIX}/api/overview")
-    async def overview(request: Request, chart: bool = Query(False)) -> Any:
-        _require(request)
+    async def overview(request: Request, chart: bool = Query(False), _account: WebAccount = Depends(member)) -> Any:
         try:
             data = await get_runtime().market.overview()
         except Exception as error:
@@ -237,12 +214,15 @@ def get_router() -> APIRouter:
         if chart:
             html = overview_html(data)
             payload["html"] = html
-            payload["chart_url"] = f"{ROUTER_PREFIX}/api/chart/html?type=overview"
+            payload["chart_url"] = f"{_mount_path(request)}/api/chart/html?type=overview"
         return payload
 
     @router.get(f"{ROUTER_PREFIX}/api/quote")
-    async def quote(request: Request, q: str = Query(..., min_length=1, max_length=80)) -> Any:
-        _require(request)
+    async def quote(
+        request: Request,
+        q: str = Query(..., min_length=1, max_length=80),
+        _account: WebAccount = Depends(member),
+    ) -> Any:
         try:
             data = await get_runtime().market.quote(q)
         except Exception as error:
@@ -254,8 +234,8 @@ def get_router() -> APIRouter:
         request: Request,
         q: str = Query(..., min_length=1, max_length=80),
         period: str = Query("日k", max_length=10),
+        _account: WebAccount = Depends(member),
     ) -> Any:
-        _require(request)
         try:
             data = await get_runtime().market.kline(q, period)
         except Exception as error:
@@ -263,8 +243,11 @@ def get_router() -> APIRouter:
         return {"ok": True, "data": data}
 
     @router.get(f"{ROUTER_PREFIX}/api/sector")
-    async def sector(request: Request, kind: str = Query("industry")) -> Any:
-        _require(request)
+    async def sector(
+        request: Request,
+        kind: str = Query("industry"),
+        _account: WebAccount = Depends(member),
+    ) -> Any:
         normalized = "concept" if kind in {"concept", "概念"} else "industry"
         try:
             data = await get_runtime().market.board(normalized, limit=30)
@@ -279,8 +262,8 @@ def get_router() -> APIRouter:
         q: str = Query("上证指数", max_length=120),
         period: str = Query("日k", max_length=10),
         ndays: int = Query(1, ge=1, le=5),
+        _account: WebAccount = Depends(member),
     ) -> Any:
-        _require(request)
         runtime = get_runtime()
         try:
             kind = type.lower()
@@ -316,8 +299,8 @@ def get_router() -> APIRouter:
         q: str = Query("上证指数", max_length=120),
         period: str = Query("日k", max_length=10),
         ndays: int = Query(1, ge=1, le=5),
+        _account: WebAccount = Depends(member),
     ) -> Any:
-        _require(request)
         runtime = get_runtime()
         try:
             kind = type.lower()
@@ -344,16 +327,16 @@ def get_router() -> APIRouter:
         return Response(content=image, media_type="image/png")
 
     @router.get(f"{ROUTER_PREFIX}/api/watchlist")
-    async def watchlist(request: Request) -> Any:
-        _require(request)
-        ctx = _web_context(request)
-        items = await get_runtime().watchlist.list(_watch_key(ctx))
+    async def watchlist(account: WebAccount = Depends(member)) -> Any:
+        items = await get_runtime().watchlist.list(_watch_key(account))
         return {"ok": True, "items": items}
 
     @router.post(f"{ROUTER_PREFIX}/api/watchlist")
-    async def watchlist_add(request: Request, body: dict[str, Any] = Body(...)) -> Any:
-        _require(request)
-        ctx = _web_context(request)
+    async def watchlist_add(
+        body: dict[str, Any] = Body(...),
+        account: WebAccount = Depends(member),
+        _csrf: None = Depends(csrf_guard),
+    ) -> Any:
         query = str(body.get("query") or "").strip()
         if not query:
             raise HTTPException(status_code=400, detail="缺少 query")
@@ -361,30 +344,35 @@ def get_router() -> APIRouter:
         symbol = await runtime.market.resolve(query)
         if symbol is None:
             raise HTTPException(status_code=404, detail=f"未找到标的：{query}")
-        added = await runtime.watchlist.add(_watch_key(ctx), symbol.code, symbol.name, query)
+        added = await runtime.watchlist.add(_watch_key(account), symbol.code, symbol.name, query)
         return {"ok": True, "added": added, "code": symbol.code, "name": symbol.name}
 
     @router.delete(f"{ROUTER_PREFIX}/api/watchlist/{{code}}")
-    async def watchlist_remove(request: Request, code: str) -> Any:
-        _require(request)
-        ctx = _web_context(request)
-        removed = await get_runtime().watchlist.remove(_watch_key(ctx), code)
+    async def watchlist_remove(
+        code: str,
+        account: WebAccount = Depends(member),
+        _csrf: None = Depends(csrf_guard),
+    ) -> Any:
+        removed = await get_runtime().watchlist.remove(_watch_key(account), code)
         return {"ok": True, "removed": removed}
 
     @router.post(f"{ROUTER_PREFIX}/api/command")
-    async def command(request: Request, body: dict[str, Any] = Body(...)) -> Any:
-        _require(request)
+    async def command(
+        request: Request,
+        body: dict[str, Any] = Body(...),
+        account: WebAccount = Depends(member),
+        _csrf: None = Depends(csrf_guard),
+    ) -> Any:
         text = str(body.get("text") or "").strip()
         if not text:
             raise HTTPException(status_code=400, detail="缺少 text")
-        ctx = _web_context(request)
         ue = UnifiedEvent(
-            platform="web",
-            bot_id="web",
-            user_id=ctx.user_id,
+            platform="qweb",
+            bot_id="qweb",
+            user_id=account.qq,
             text=text,
             message_id="",
-            sender_name=ctx.user_id,
+            sender_name=account.qq,
         )
         try:
             result = await execute(text, ue)
@@ -401,50 +389,13 @@ def get_router() -> APIRouter:
             "artifacts": [_artifact_payload(request, item) for item in result.artifacts],
         }
 
-    @router.post(f"{ROUTER_PREFIX}/api/chat")
-    async def web_chat(request: Request, body: dict[str, Any] = Body(...)) -> Any:
-        _require(request)
-        message = str(body.get("message") or "").strip()
-        if not message:
-            raise HTTPException(status_code=400, detail="缺少 message")
-        history = body.get("history")
-        ctx = _web_context(request)
-        if not configured():
-            # Allow command-style use even before an LLM is configured.
-            try:
-                result = await execute(
-                    message, UnifiedEvent(platform="web", bot_id="web", user_id=ctx.user_id, text=message)
-                )
-            except Exception as error:
-                raise HTTPException(status_code=503, detail=str(error)) from error
-            return {
-                "ok": True,
-                "mode": "command",
-                "reply": result.with_links(),
-                "tool_calls": [],
-                "images": (
-                    ["data:image/png;base64," + __import__("base64").b64encode(result.image).decode("ascii")]
-                    if result.image
-                    else []
-                ),
-                "artifacts": [_artifact_payload(request, item) for item in result.artifacts],
-                "llm_configured": False,
-            }
-        try:
-            result = await chat(message, context=ctx, history=history if isinstance(history, list) else [])
-        except LLMError as error:
-            raise HTTPException(status_code=503, detail=str(error)) from error
-        result["artifacts"] = [_artifact_payload(request, item) for item in result.get("artifacts", [])]
-        return result
-
     @router.get(f"{ROUTER_PREFIX}/api/artifacts")
-    async def artifacts(request: Request) -> Any:
-        _require(request)
-        return {"ok": True, "items": list_artifacts(50)}
+    async def artifacts(account: WebAccount = Depends(member)) -> Any:
+        return {"ok": True, "items": list_artifacts(50, owner=account.qq)}
 
     @router.get(f"{ROUTER_PREFIX}/artifact/{{artifact_id}}.html")
-    async def artifact_html(artifact_id: str) -> Any:
-        found = get_artifact(artifact_id)
+    async def artifact_html(artifact_id: str, account: WebAccount = Depends(member)) -> Any:
+        found = get_artifact(artifact_id, owner=account.qq)
         if found is None or found[0].mime not in {"text/html", "text/html; charset=utf-8"}:
             return HTMLResponse("制品不存在", status_code=404)
         _, path = found
@@ -454,20 +405,76 @@ def get_router() -> APIRouter:
                 "font-src data:; sandbox allow-same-origin"
             ),
             "X-Content-Type-Options": "nosniff",
+            "Content-Disposition": "inline",
         }
         return HTMLResponse(path.read_text(encoding="utf-8"), headers=headers)
 
     @router.get(f"{ROUTER_PREFIX}/artifact/{{artifact_id}}.png")
-    async def artifact_png(artifact_id: str) -> Any:
-        found = get_artifact(artifact_id)
+    async def artifact_png(artifact_id: str, account: WebAccount = Depends(member)) -> Any:
+        found = get_artifact(artifact_id, owner=account.qq)
         if found is None or not found[0].mime.startswith("image/"):
             return Response(status_code=404)
         _, path = found
         return Response(content=path.read_bytes(), media_type="image/png")
 
+    @router.get(f"{ROUTER_PREFIX}/api/qweb/tools")
+    async def qweb_tools(_account: WebAccount = Depends(member)) -> Any:
+        return {
+            "schema": "qweb.plugin.tools.v1",
+            "tools": [
+                {
+                    "name": item.name,
+                    "description": item.description,
+                    "parameters": item.parameters,
+                    "effect": item.effect,
+                    "permission": item.permission,
+                }
+                for item in TOOLS.values()
+            ],
+            "execute": f"{ROUTER_PREFIX}/api/qweb/tools/{{name}}",
+            "csrf_header": CSRF_HEADER,
+        }
+
+    @router.post(f"{ROUTER_PREFIX}/api/qweb/tools/{{name}}")
+    async def qweb_execute_tool(
+        request: Request,
+        name: str,
+        body: dict[str, Any] = Body(...),
+        account: WebAccount = Depends(member),
+        _csrf: None = Depends(csrf_guard),
+    ) -> Any:
+        definition = TOOLS.get(name)
+        if definition is None:
+            raise HTTPException(status_code=404, detail=f"未知工具：{name}")
+        arguments = body.get("arguments")
+        if not isinstance(arguments, dict):
+            arguments = {}
+        confirmed = body.get("confirmed") is True
+        if definition.effect == "mutating" and not confirmed:
+            raise HTTPException(
+                status_code=409,
+                detail="该工具会修改用户数据，需要宿主先取得用户确认并传入 confirmed=true",
+            )
+        context = ToolContext(
+            platform="qweb",
+            user_id=account.qq,
+            session_id=f"qweb:{account.qq}",
+            bot_id="qweb",
+            confirmed=confirmed,
+        )
+        try:
+            outcome = await run_tool(name, arguments, context)
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail=f"未知工具：{name}") from error
+        except Exception as error:
+            raise HTTPException(status_code=502, detail=str(error)) from error
+        payload = outcome.public()
+        payload["ok"] = True
+        payload["artifacts"] = [_artifact_payload(request, item) for item in outcome.artifacts]
+        return payload
+
     @router.get(f"{ROUTER_PREFIX}/api/qweb/catalog")
-    async def qweb_catalog(request: Request) -> Any:
-        _require(request)
+    async def qweb_catalog(_account: WebAccount = Depends(admin)) -> Any:
         features = []
         for index, item in enumerate(MENU_DATA):
             features.append(
@@ -493,8 +500,8 @@ def get_router() -> APIRouter:
         }
 
     @router.get(f"{ROUTER_PREFIX}/api/qweb/manifest")
-    async def qweb_manifest(request: Request) -> Any:
-        _require(request)
+    async def qweb_manifest(request: Request, _account: WebAccount = Depends(admin)) -> Any:
+        mount = _mount_path(request)
         return {
             "schema": "qweb.plugin.v1",
             "id": "sayustock",
@@ -502,18 +509,17 @@ def get_router() -> APIRouter:
             "version": PLUGIN_VERSION,
             "description": PLUGIN_DESCRIPTION,
             "homepage": PLUGIN_HOMEPAGE,
-            "mount": ROUTER_PREFIX,
-            "entry": f"{ROUTER_PREFIX}/",
-            "embed": f"{ROUTER_PREFIX}/?embed=1",
-            "admin": "/qweb/admin/sayustock",
-            "catalog": f"{ROUTER_PREFIX}/api/qweb/catalog",
-            "api": f"{ROUTER_PREFIX}/api",
-            "bridge": f"{ROUTER_PREFIX}/static/qweb-bridge.js",
-            "postMessage": {
-                "source": "sayustock",
-                "ready": "sayustock.ready",
-                "reply": "sayustock.reply",
-                "error": "sayustock.error",
+            "mount": mount,
+            "entry": f"{mount}/",
+            "embed": f"{mount}/?embed=1",
+            "admin": f"{mount}/api/qweb/manifest",
+            "catalog": f"{mount}/api/qweb/catalog",
+            "tools": f"{mount}/api/qweb/tools",
+            "api": f"{mount}/api",
+            "chat": {
+                "provider": "qweb",
+                "endpoint": "/qweb/chat",
+                "billing": "host_account",
             },
             "capabilities": [
                 "market.overview",
@@ -523,30 +529,55 @@ def get_router() -> APIRouter:
                 "chart.html",
                 "chart.png",
                 "artifact.html",
-                "llm.chat",
+                "tools.execute",
             ],
             "auth": {
-                "type": "bearer",
-                "env": "SAYUSTOCK_WEB_TOKEN",
-                "qweb_admin_header": "X-QWeb-Admin",
+                "membership": f"{HOST_DEPENDENCIES_MODULE}.require_membership",
+                "admin": f"{HOST_DEPENDENCIES_MODULE}.admin_account",
+                "csrf": f"{HOST_DEPENDENCIES_MODULE}.csrf_protected",
+                "csrf_header": CSRF_HEADER,
+                "identity": "account.qq",
             },
         }
 
     return router
 
 
-def mount_webui(app: Any) -> bool:
-    """Mount the router on the NoneBot FastAPI app (idempotent)."""
+def get_router(host: HostDependencies | None = None) -> APIRouter:
+    """Build the router; without QWeb host dependencies every route is 503."""
+    resolved = host if host is not None else load_host_dependencies()
+    if resolved is None:
+        return _unavailable_router()
+    return _build_router(resolved)
+
+
+def mount_webui(app: Any, host: HostDependencies | None = None) -> bool:
+    """Mount the router on the host FastAPI app (idempotent)."""
     if getattr(app, "__sayustock_mounted__", False):
         return True
+    resolved = host if host is not None else load_host_dependencies()
+    if resolved is None:
+        from nonebot.log import logger
+
+        logger.warning(
+            "[SayuStock] 未找到 QWeb 宿主依赖 {}，网页按默认策略不挂载",
+            HOST_DEPENDENCIES_MODULE,
+        )
+        return False
     try:
-        app.include_router(get_router())
+        router = _build_router(resolved)
+        try:
+            from src.qi_web.plugin_pages import include_plugin_router
+        except ImportError:
+            app.include_router(router)
+        else:
+            include_plugin_router(app, router)
         setattr(app, "__sayustock_mounted__", True)
         return True
     except Exception as error:
         from nonebot.log import logger
 
-        logger.error("[SayuStock] 挂载 WebUI 失败: {}", error)
+        logger.error("[SayuStock] 挂载 QWeb 页面失败: {}", error)
         return False
 
 
