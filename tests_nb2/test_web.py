@@ -7,7 +7,7 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.testclient import TestClient
 
 from nonebot_plugin_sayustock import config
-from nonebot_plugin_sayustock.web import host as host_module, get_router
+from nonebot_plugin_sayustock.web import ROUTER_PREFIX, host as host_module, get_router
 from nonebot_plugin_sayustock.runtime import Runtime, set_runtime
 from nonebot_plugin_sayustock.web.host import HostDependencies
 from nonebot_plugin_sayustock.services.market import MarketService
