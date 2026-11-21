@@ -116,7 +116,7 @@ async def _guard(bot: Bot, event: Event, awaitable: Any) -> None:
 # ---------------------------------------------------------------------------
 help_matcher = on_command(
     "股票帮助",
-    aliases={"SayuStock帮助", "早柚股票", "sayustock帮助", "股票菜单"},
+    aliases={"股票菜单"},
     priority=5,
     block=True,
 )
@@ -248,7 +248,7 @@ async def _rank(bot: Bot, event: Event) -> None:
     await _guard(bot, event, rank_result("main_inflow"))
 
 
-dispatcher = on_command("股票", aliases={"sayustock", "SayuStock"}, priority=5, block=True)
+dispatcher = on_command("股票", priority=5, block=True)
 
 
 @dispatcher.handle()

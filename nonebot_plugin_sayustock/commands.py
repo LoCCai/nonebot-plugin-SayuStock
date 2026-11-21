@@ -455,7 +455,7 @@ async def report_result(ue: UnifiedEvent, raw: str) -> CommandResult:
 
 
 _COMMAND_ALIASES = {
-    "help": ("股票帮助", "SayuStock帮助", "早柚股票"),
+    "help": ("股票帮助", "股票菜单"),
     "overview": ("大盘概览", "大盘", "市场概览"),
     "stock": ("个股", "行情", "查行情"),
     "compare": ("对比个股", "个股对比"),
