@@ -177,6 +177,7 @@ def get_router() -> APIRouter:
             "version": PLUGIN_VERSION,
             "llm_configured": configured(),
             "render_enabled": get_runtime().render_enabled,
+            "render_backend": "nonebot-plugin-htmlrender",
             "time": time.time(),
         }
 

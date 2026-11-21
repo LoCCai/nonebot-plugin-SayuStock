@@ -12,7 +12,8 @@
 > 快速开始见 **[docs/nonebot2.md](./docs/nonebot2.md)**。
 >
 > ```bash
-> pip install "nonebot-plugin-sayustock[render] @ git+https://github.com/LoCCai/nonebot-plugin-SayuStock.git@nonebot2"
+> pip install "nonebot-plugin-sayustock @ git+https://github.com/LoCCai/nonebot-plugin-SayuStock.git@nonebot2"
+> playwright install chromium
 > ```
 >
 > 原 GsCore 安装方式保留在下方，供上游同步与旧部署参考。

@@ -12,8 +12,9 @@
 在 NoneBot2 工程中：
 
 ```bash
-# 推荐：完整安装（含 HTML→PNG 渲染）
-pip install "nonebot-plugin-sayustock[render] @ git+https://github.com/LoCCai/nonebot-plugin-SayuStock.git@nonebot2"
+# 安装插件（已依赖 nonebot-plugin-htmlrender；再安装浏览器内核）
+pip install "nonebot-plugin-sayustock @ git+https://github.com/LoCCai/nonebot-plugin-SayuStock.git@nonebot2"
+playwright install chromium
 
 # 或把仓库放入 src/plugins/ 后，在 pyproject.toml 中启用
 ```
@@ -30,13 +31,17 @@ adapters = [
 driver = "~fastapi"
 ```
 
-首次启动后渲染图片需要：
+首次启动后渲染图片需要浏览器内核：
 
 ```bash
 playwright install chromium
 ```
 
-不安装 Playwright 时，插件仍可运行：图表以 HTML 制品保存，在网页中直接查看；
+插件通过 `require("nonebot_plugin_htmlrender")` 加载官方
+**nonebot-plugin-htmlrender**，并调用其公开 `html_to_pic` 把自包含 HTML
+（Jinja + 内联 SVG/CSS/纹理）渲染为 PNG。它不会再自建浏览器或第二条渲染链。
+
+不安装浏览器内核时，插件仍可运行：图表以 HTML 制品保存，在网页中直接查看；
 Bot 侧返回 HTML 链接而不是 PNG。
 
 ## 2. 配置
@@ -72,8 +77,8 @@ SAYUSTOCK_LLM_MODEL=gpt-4o-mini
 | `web.public_base_url` | 空 | Bot 消息里 HTML 链接的站点前缀 |
 | `web.trust_qweb` | `false` | 是否信任 `X-QWeb-Admin: 1` |
 | `llm.base_url` / `llm.model` | 空 | 网页 AI 的 OpenAI 兼容端点 |
-| `render.enabled` | `true` | 是否尝试 HTML→PNG |
-| `render.scale` | `1.25` | 图片像素倍率 |
+| `render.enabled` | `true` | 是否尝试 HTML→PNG（后端固定为 nonebot-plugin-htmlrender） |
+| `render.scale` | `1.25` | 图片像素倍率，传入 htmlrender 的 `device_scale_factor` |
 | `market.provider_chain` | 空 | 行情源链；空则用原插件默认（东财→腾讯→新浪） |
 
 ## 3. 命令

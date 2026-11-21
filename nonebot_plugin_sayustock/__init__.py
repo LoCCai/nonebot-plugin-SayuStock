@@ -53,6 +53,18 @@ try:
 except Exception:
     logger.debug("[SayuStock] MoEllmChats 未加载，工具桥接将在启动时重试")
 
+HTMLRENDER_AVAILABLE = False
+try:
+    import importlib.util
+
+    if importlib.util.find_spec("nonebot_plugin_htmlrender") is not None:
+        require("nonebot_plugin_htmlrender")
+        HTMLRENDER_AVAILABLE = True
+    else:
+        logger.warning("[SayuStock] 未安装 nonebot-plugin-htmlrender，图片将降级为 HTML 制品")
+except Exception:
+    logger.warning("[SayuStock] nonebot-plugin-htmlrender 加载失败，图片将降级为 HTML 制品")
+
 __plugin_meta__ = PluginMetadata(
     name="SayuStock 股票",
     description=PLUGIN_DESCRIPTION,
