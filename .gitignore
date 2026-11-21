@@ -683,3 +683,10 @@ test_output/
 docs/paper
 .commandcode
 preview_output/
+data/
+dist/
+*.egg-info/
+.pytest_cache/
+preview_*.png
+test_*.html
+ui_*.png

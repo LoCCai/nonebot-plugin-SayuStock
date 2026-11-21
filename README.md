@@ -1,5 +1,22 @@
 # SayuStock
 
+> ## 🌿 当前分支：`nonebot2`
+>
+> 本分支把 SayuStock 改造为**可独立安装的 NoneBot2 插件**，支持
+> **OneBot v11 / OneBot v12 / QQ 官方机器人**，并接入：
+>
+> - 🧩 **PicMenu Next**：`PluginMetadata.extra.menu_data` 三级菜单
+> - 🤖 **MoEllmChats**：`sayustock_*` 强类型 ToolSpec（行情/技术分析/选股/图表/报告）
+> - 🕸️ **QWeb 网页基座**：`/sayustock` 页面、API、HTML 图表与网页 AI
+>
+> 快速开始见 **[docs/nonebot2.md](./docs/nonebot2.md)**。
+>
+> ```bash
+> pip install "nonebot-plugin-sayustock[render] @ git+https://github.com/LoCCai/nonebot-plugin-SayuStock.git@nonebot2"
+> ```
+>
+> 原 GsCore 安装方式保留在下方，供上游同步与旧部署参考。
+
 <p align="center">
   <a href="https://github.com/KimigaiiWuyi/SayuStock"><img src="./ICON.png" width="256" height="256" alt="SayuStock"></a>
 </p>
