@@ -5,8 +5,11 @@ from __future__ import annotations
 import asyncio
 from dataclasses import field, dataclass
 
+from nonebot.log import logger
+
 from .compat import bootstrap
 from .config import get_value, ensure_config_file
+from .storage import postgres_enabled, verify_postgres_storage
 from .artifacts import Artifact
 from .watchlist import WatchlistStore
 
@@ -26,6 +29,9 @@ class Runtime:
         if self.started:
             return
         ensure_config_file()
+        if postgres_enabled():
+            await verify_postgres_storage()
+            logger.info("[SayuStock] PostgreSQL 存储已就绪（schema=qiqi_sayustock）")
         self.started = True
 
     @property

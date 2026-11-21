@@ -124,6 +124,8 @@ HTML 制品带 `Content-Security-Policy: sandbox`，可由宿主页面 iframe �
 
 ### 网页对话
 
+七七 OneBot v11 群中，财经快讯等单张卡直接以图片投递。图文、多图和纯文字结果各使用一条合并转发。股票卡片复用七七发布的主题和日夜配色，网页从结构化制品字段打开 HTML。
+
 股票页直接链接到 `/qweb/chat`。七七加载插件后，登录用户在该对话选择模型。业务工具复用当前回答的身份、授权、工具额度及计费，图表写入当前会话附件。股票页通过 `/qweb/api/v1/auth/session` 读取写操作所需的 CSRF 令牌。
 
 ## 6. 配置
@@ -131,12 +133,33 @@ HTML 制品带 `Content-Security-Policy: sandbox`，可由宿主页面 iframe �
 | 配置 | 默认 | 说明 |
 | --- | --- | --- |
 | `web.enabled` | `true` | 是否尝试挂载；无 QWeb 宿主依赖时仍不挂载 |
-| `web.public_base_url` | 空 | Bot 消息中 HTML 链接的站点前缀 |
+| `web.public_base_url` | 空 | 私聊制品链接的站点前缀 |
 | `render.enabled` | `true` | 是否尝试 HTML→PNG（nonebot-plugin-htmlrender） |
 | `render.scale` | `1.25` | 图片像素倍率 |
 | `market.provider_chain` | 空 | 行情源链；空则用原插件默认 |
 
 不存在 `web.token`、`llm.*`、`SAYUSTOCK_LLM_*` 等插件自有模型/令牌配置。
+
+### PostgreSQL 存储（七七部署）
+
+独立部署默认 `SAYUSTOCK_STORAGE=file`，自选与制品索引都留在现有
+`{SAYUSTOCK_DATA_DIR}/watchlist.json`、`{SAYUSTOCK_DATA_DIR}/artifacts/index.json`
+路径，行为不变。
+
+七七显式设置 `SAYUSTOCK_STORAGE=postgres`（可通过 NoneBot `.env.prod` 或进程
+环境变量）。连接串不在插件里配置，而是复用宿主
+`src.qi_web.config.get_settings().database_url`（`str` 或 `SecretStr`）；
+测试环境才允许用 `SAYUSTOCK_DATABASE_URL` 覆盖。插件不会打印连接串。
+
+PG 模式是 **fail closed**：宿主配置缺失、psycopg 缺失、表缺失或 SQL 失败都会
+报错，绝不回退到文件。插件运行时不执行 DDL、不建表；运维预先创建：
+
+- `qiqi_sayustock.watchlist(owner_key text primary key, items jsonb not null)`
+- `qiqi_sayustock.artifact(id text primary key, record jsonb not null)`
+
+制品正文（`.html` / `.png`）仍在原 `artifacts/` 目录，只有索引写 PG。自选用
+`SELECT ... FOR UPDATE` 事务锁保留顺序、字段、空列表和 owner 隔离；制品索引
+创建/清理在同一事务内完成，文件在索引提交后再删除。启动时会校验两张表可用。
 
 ## 7. 测试
 
@@ -146,3 +169,9 @@ python -m pytest tests_nb2 -q
 
 覆盖：配置合并、菜单、协议事件、行情工具、QWeb 成员/管理员/CSRF、制品归属、
 MoEllm ToolSpec 与上游 `tool_manager` 注册。网络型行情测试默认跳过。
+
+真实 PG 并发/fail-closed 测试只在提供测试库时运行，且只操作临时 owner 行，不建表：
+
+```bash
+SAYUSTOCK_DATABASE_URL=postgresql://... pytest tests_nb2/test_storage_postgres.py -q
+```

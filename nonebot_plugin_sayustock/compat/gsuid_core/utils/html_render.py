@@ -1,20 +1,15 @@
 """HTML -> image bridge backed by the official ``nonebot-plugin-htmlrender``.
 
 SayuStock's Jinja/SVG pages are self-contained HTML (CSS, SVG and textures
-are inlined), so the bridge only needs htmlrender's public ``html_to_pic``
+are inlined), so the bridge only needs htmlrender's public ``render_html``
 entry point.  The renderer is loaded lazily: importing the plugin never starts
 Chromium.
 """
 
 from __future__ import annotations
 
+import re
 from typing import Literal
-from pathlib import Path
-
-
-def _file_url() -> str:
-    cwd = Path.cwd().resolve().as_posix()
-    return f"file:///{cwd.lstrip('/')}" if not cwd.startswith("/") else f"file://{cwd}"
 
 
 async def render_html_to_bytes(
@@ -37,7 +32,7 @@ async def render_html_to_bytes(
     del allow_refit, default_font_size, lang  # contract-only parameters
 
     try:
-        from nonebot_plugin_htmlrender import html_to_pic
+        import nonebot_plugin_htmlrender as renderer
     except Exception as error:  # pragma: no cover - dependency/runtime issue
         raise RuntimeError(
             "缺少 HTML 渲染依赖：请安装 nonebot-plugin-htmlrender，并执行 `playwright install chromium`"
@@ -53,14 +48,23 @@ async def render_html_to_bytes(
     if quality is not None:
         quality = max(1, min(int(quality), 100))
 
-    return await html_to_pic(
+    # Charts contain inline SVG/CSS and data images; remote Chromium needs no
+    # directory navigation, external stylesheets, scripts or network resources.
+    policy = (
+        '<meta http-equiv="Content-Security-Policy" content="'
+        "default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:"
+        '">'
+    )
+    html = re.sub(r"(<head\b[^>]*>)", lambda match: match[0] + policy, html, count=1, flags=re.I)
+    render = getattr(renderer, "render_html", None)
+    format_arg = {"image_type": image_format} if render is not None else {"type": image_format}
+    return await (render or renderer.html_to_pic)(
         html,
         wait=0,
-        template_path=_file_url(),
-        type=image_format,
+        **format_arg,
         quality=quality,
         device_scale_factor=max(1.0, min(scale, 3.0)),
-        viewport={"width": viewport_width, "height": 1000},
+        viewport={"width": viewport_width, "height": 64},
         screenshot_timeout=45_000,
         full_page=True,
     )

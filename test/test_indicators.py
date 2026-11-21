@@ -275,3 +275,10 @@ def test_volume_ratio_and_location_metrics() -> None:
     df_zero = _series(30)
     df_zero.loc[df_zero.index[-6:-1], "volume"] = 0.0
     assert pt.calc_volume_ratio(df_zero) is None
+
+
+def test_missing_turnover_keeps_other_indicators(df):
+    frame = df.assign(turnover_rate=None)
+    result = pt.compute_indicators(frame)
+    assert result["turnover_pct"] is None
+    assert result["ma20"] == pt.compute_indicators(df)["ma20"]

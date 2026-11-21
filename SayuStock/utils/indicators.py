@@ -472,7 +472,7 @@ def calc_rel_volume(df: pd.DataFrame, n: int = 20) -> float | None:
     rolled = vol.rolling(n).mean()
     assert isinstance(rolled, pd.Series)
     avg = _last(rolled)
-    last = _to_float(vol.iloc[-1])
+    last = _last(vol)
     if avg is None or avg == 0 or last is None:
         return None
     return last / avg
@@ -615,7 +615,7 @@ def compute_indicators(df: pd.DataFrame) -> dict[str, float | bool | None]:
     close_pct = calc_close_percentile(close, 60)
     last_open: float | None = None
     if "open" in df.columns:
-        last_open = _to_float(df["open"].iloc[-1])
+        last_open = _last(df["open"])
     bias20 = calc_bias(close, 20)
     atr = calc_atr_pct(df, 14)
     support, resistance = calc_support_resistance(df, 20)
@@ -634,7 +634,7 @@ def compute_indicators(df: pd.DataFrame) -> dict[str, float | bool | None]:
     if "turnover_rate" in df.columns:
         tr_col = df["turnover_rate"]
         assert isinstance(tr_col, pd.Series)
-        turnover = _to_float(tr_col.iloc[-1])
+        turnover = _last(tr_col)
     last_close: float = _to_float(close.iloc[-1])
 
     return {

@@ -41,6 +41,7 @@ class PluginConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     sayustock_data_dir: str | None = None
+    sayustock_storage: str = "file"
     sayustock_web_enabled: bool = True
     sayustock_public_base_url: str = ""
     sayustock_render_enabled: bool = True

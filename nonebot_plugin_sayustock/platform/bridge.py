@@ -176,8 +176,42 @@ async def send_image(ue: UnifiedEvent, image: bytes, *, caption: str = "") -> bo
         return False
 
 
+async def send_group_result(ue: UnifiedEvent, text: str, images: list[bytes]) -> None:
+    """Deliver one response. OneBot v11 groups support native forward nodes."""
+    segments = [await _image_segment(ue.platform, ue.bot, image) for image in images]
+    segments = [segment for segment in segments if segment is not None]
+    if len(segments) == 1 and not text:
+        await _send(ue.bot, ue.raw_event, segments[0])
+        return
+    if ue.platform == "onebot11" and ue.group_id:
+        from nonebot.adapters.onebot.v11 import Message, MessageSegment
+
+        nodes = [Message(segment) for segment in segments]
+        if text:
+            nodes.append(Message(MessageSegment.text(text)))
+        if not nodes:
+            return
+        # The gateway interprets segment arrays literally (including user text).
+        await ue.bot.call_api(
+            "send_group_forward_msg", group_id=int(ue.group_id),
+            messages=[{"type": "node", "data": {
+                "uin": ue.bot_id, "name": "七七", "content": list(node),
+            }} for node in nodes],
+        )
+    elif segments:
+        message = segments[0].get_message_class()(segments)
+        if text:
+            message += text
+        await _send(ue.bot, ue.raw_event, message)
+    elif text:
+        await send_text(ue, text)
+
+
 async def send_result(ue: UnifiedEvent, text: str, image: bytes | None = None) -> None:
     """Send an optional image plus concise text, degrading safely."""
+    if ue.group_id or ue.channel_id or ue.guild_id:
+        await send_group_result(ue, text, [image] if image else [])
+        return
     delivered = False
     if image:
         delivered = await send_image(ue, image)

@@ -554,6 +554,8 @@ class MarketService:
                 raise MarketServiceError(f"{query}: 首日收盘价为 0")
             step = max(1, len(result.bars) // 240)
             sampled = result.bars[::step]
+            if sampled[-1] is not result.bars[-1]:
+                sampled = [*sampled, result.bars[-1]]
             traces.append(
                 {
                     "code": result.symbol.code,

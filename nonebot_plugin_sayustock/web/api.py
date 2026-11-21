@@ -25,6 +25,7 @@ from .host import (
 from ..menu import MENU_DATA, PLUGIN_NAME, PLUGIN_VERSION, PLUGIN_HOMEPAGE, PLUGIN_DESCRIPTION
 from ..paths import STATIC_DIR, TEMPLATES_DIR
 from ..runtime import get_runtime
+from ..storage import storage_mode
 from ..ai.tools import TOOLS, run_tool
 from ..commands import execute
 from ..platform import UnifiedEvent
@@ -185,6 +186,7 @@ def _build_router(host: HostDependencies, prefix: str = ROUTER_PREFIX) -> APIRou
             "version": PLUGIN_VERSION,
             "render_enabled": get_runtime().render_enabled,
             "render_backend": "nonebot-plugin-htmlrender",
+            "storage": storage_mode(),
             "time": time.time(),
         }
 
@@ -390,7 +392,7 @@ def _build_router(host: HostDependencies, prefix: str = ROUTER_PREFIX) -> APIRou
             raise HTTPException(status_code=502, detail=str(error)) from error
         return {
             "ok": True,
-            "text": result.with_links(),
+            "text": result.text,
             "image": (
                 "data:image/png;base64," + __import__("base64").b64encode(result.image).decode("ascii")
                 if result.image

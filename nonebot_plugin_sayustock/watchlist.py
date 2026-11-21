@@ -9,6 +9,7 @@ from pathlib import Path
 
 from .paths import WATCHLIST_PATH
 from .config import get_value
+from .storage import postgres_enabled
 
 
 def owner_key(*, platform: str, bot_id: str, user_id: str) -> str:
@@ -20,6 +21,11 @@ class WatchlistStore:
         self._path = path
         self._lock = asyncio.Lock()
         self._data: dict[str, list[dict[str, str]]] | None = None
+        self._postgres: Any | None = None
+        if postgres_enabled():
+            from .postgres_watchlist import PostgresWatchlist
+
+            self._postgres = PostgresWatchlist()
 
     def _load(self) -> dict[str, list[dict[str, str]]]:
         if self._data is not None:
@@ -52,10 +58,14 @@ class WatchlistStore:
             return 30
 
     async def list(self, key: str) -> list[dict[str, str]]:
+        if self._postgres is not None:
+            return await self._postgres.list(key)
         async with self._lock:
             return [dict(item) for item in self._load().get(key, [])]
 
     async def add(self, key: str, code: str, name: str, query: str) -> bool:
+        if self._postgres is not None:
+            return await self._postgres.add(key, code, name, query)
         async with self._lock:
             items = self._load().setdefault(key, [])
             if any(item.get("code") == code for item in items):
@@ -67,6 +77,8 @@ class WatchlistStore:
             return True
 
     async def remove(self, key: str, code: str) -> bool:
+        if self._postgres is not None:
+            return await self._postgres.remove(key, code)
         async with self._lock:
             items = self._load().get(key, [])
             remaining = [item for item in items if item.get("code") != code]
@@ -77,12 +89,18 @@ class WatchlistStore:
             return True
 
     async def clear(self, key: str) -> int:
+        if self._postgres is not None:
+            return await self._postgres.clear(key)
         async with self._lock:
             items = self._load().pop(key, [])
             self._save()
             return len(items)
 
     def snapshot(self) -> dict[str, Any]:
+        if self._postgres is not None:
+            from .postgres_watchlist import snapshot_owners
+
+            return {"version": 1, "owners": snapshot_owners()}
         return {"version": 1, "owners": self._load()}
 
 

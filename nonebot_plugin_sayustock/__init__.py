@@ -106,7 +106,7 @@ async def _guard(bot: Bot, event: Event, awaitable: Any) -> None:
     except Exception as error:
         logger.exception("[SayuStock] 命令执行失败: {}", error)
         ue = from_event(bot, event)
-        await ue.bot.send(ue.raw_event, f"SayuStock 执行失败：{error}")
+        await deliver(ue, CommandResult(f"股票查询失败：{error}"))
         return
     await _deliver(bot, event, result)
 
@@ -237,7 +237,7 @@ news_matcher = on_command("股票资讯", aliases={"财经快讯", "快讯"}, pr
 
 @news_matcher.handle()
 async def _news(bot: Bot, event: Event) -> None:
-    await _guard(bot, event, news_result())
+    await _guard(bot, event, news_result(owner=from_event(bot, event).user_id))
 
 
 rank_matcher = on_command("资金排行", aliases={"排行榜", "榜单"}, priority=5, block=True)
@@ -301,6 +301,12 @@ async def _sayustock_shutdown() -> None:
         moellm_bridge.unregister()
     except Exception:
         pass
+    try:
+        from .storage import close_postgres_pools
+
+        await close_postgres_pools()
+    except Exception as error:
+        logger.debug("[SayuStock] 关闭 PostgreSQL 连接池失败: {}", type(error).__name__)
 
 
 __all__ = ["QIQI_CHAT_TOOLS", "__plugin_meta__", "__version__", "MENU_DATA"]

@@ -14,14 +14,15 @@ from .runtime import get_runtime, artifact_url
 from .platform import UnifiedEvent, send_text, send_image
 from .artifacts import Artifact, create_html
 from .watchlist import owner_key
+from .platform.bridge import send_group_result
 from .services.charts import (
     ChartRenderError,
     rasterize,
     overview_html,
     build_kline_html,
     build_report_html,
-    build_compare_html,
     build_intraday_html,
+    compare_series_html,
     build_multi_intraday_html,
 )
 from .services.market import MarketServiceError, normalize_period
@@ -32,6 +33,9 @@ class CommandResult:
     text: str
     image: bytes | None = None
     artifacts: list[Artifact] = field(default_factory=list)
+
+    extra_images: list[bytes] = field(default_factory=list)
+    image_only: bool = False
 
     def with_links(self) -> str:
         if not self.artifacts:
@@ -58,13 +62,6 @@ async def _render(html: str, width: int) -> bytes | None:
     except Exception as error:
         logger.warning("[SayuStock] 图片渲染异常: {}", error)
         return None
-
-
-def _artifact_link_note(artifacts: list[Artifact]) -> str:
-    if not artifacts:
-        return ""
-    base = str(get_value("web.public_base_url", "") or "")
-    return "\n网页查看: " + " ".join(artifact_url(item, public_base_url=base) for item in artifacts)
 
 
 async def help_result() -> CommandResult:
@@ -102,9 +99,7 @@ async def overview_result(*, owner: str = "", with_image: bool = True) -> Comman
         lines.append(f"⚠ {warning}")
     text = "\n".join(lines)
     artifact = create_html("A股大盘概览", html, kind="chart", owner=owner, meta={"command": "overview"})
-    if image is None:
-        return CommandResult(text + _artifact_link_note([artifact]), None, [artifact])
-    return CommandResult(text + _artifact_link_note([artifact]), image, [artifact])
+    return CommandResult(text, image, [artifact])
 
 
 async def stock_result(raw: str, *, owner: str = "", with_image: bool = True) -> CommandResult:
@@ -133,8 +128,8 @@ async def stock_result(raw: str, *, owner: str = "", with_image: bool = True) ->
         html, width, title = await build_kline_html(runtime.market, content, period)
         image = await _render(html, width) if with_image else None
         artifact = create_html(title, html, kind="chart", owner=owner)
-        text = f"【{title}】已生成 K 线图。" + _artifact_link_note([artifact])
-        return CommandResult(text, image, [artifact])
+        text = f"【{title}】已生成 K 线图。"
+        return CommandResult(text, image, [artifact], image_only=True)
     if sector.startswith("single-stock-ndays-"):
         ndays = int(sector.rsplit("-", 1)[-1])
     else:
@@ -146,8 +141,8 @@ async def stock_result(raw: str, *, owner: str = "", with_image: bool = True) ->
         html, width, title = await build_intraday_html(runtime.market, content, ndays)
     image = await _render(html, width) if with_image else None
     artifact = create_html(title, html, kind="chart", owner=owner)
-    text = f"【{title}】" + _artifact_link_note([artifact])
-    return CommandResult(text, image, [artifact])
+    text = f"【{title}】"
+    return CommandResult(text, image, [artifact], image_only=True)
 
 
 async def compare_result(raw: str, *, owner: str = "", with_image: bool = True) -> CommandResult:
@@ -162,9 +157,9 @@ async def compare_result(raw: str, *, owner: str = "", with_image: bool = True) 
             pass
     if len(tokens) < 2:
         return CommandResult("用法：对比个股 贵州茅台 五粮液 沪深300")
-    html, width, title = await build_compare_html(runtime.market, tokens, period)
-    image = await _render(html, width) if with_image else None
     data = await runtime.market.compare(tokens, period)
+    html, width, title = compare_series_html(data["series"])
+    image = await _render(html, width) if with_image else None
     lines = [f"【{title}】{period}"]
     for trace in data.get("traces") or []:
         points = trace.get("points") or []
@@ -173,20 +168,19 @@ async def compare_result(raw: str, *, owner: str = "", with_image: bool = True) 
             f"{trace.get('name')}: {last:+.2f}%" if isinstance(last, (int, float)) else f"{trace.get('name')}: —"
         )
     text = "\n".join(lines)
-    if image is None:
-        artifact = create_html(title, html, kind="chart", owner=owner)
-        return CommandResult(text + _artifact_link_note([artifact]), None, [artifact])
-    return CommandResult(text, image)
+    artifact = create_html(title, html, kind="chart", owner=owner)
+    return CommandResult(text, image, [artifact])
 
 
-async def news_result(limit: int = 10) -> CommandResult:
-    data = await get_runtime().market.news(limit=max(1, min(limit, 30)))
-    items = data.get("items") or []
-    lines = [f"【{data.get('source_label') or data.get('source')} 财经快讯】"]
-    for item in items[:limit]:
-        prefix = "🔴" if item.get("important") else "·"
-        lines.append(f"{prefix} {item.get('title') or item.get('text')}")
-    return CommandResult("\n".join(lines))
+async def news_result(limit: int = 10, *, owner: str = "", with_image: bool = True) -> CommandResult:
+    from .services.charts import news_card
+
+    limit = max(1, min(limit, 30))
+    data = await get_runtime().market.news(limit=limit)
+    html, text = news_card(data, limit)
+    artifact = create_html("财经快讯", html, kind="news", owner=owner)
+    image = await _render(html, 880) if with_image else None
+    return CommandResult(text, image, [artifact], image_only=True)
 
 
 async def financial_result(raw: str) -> CommandResult:
@@ -269,12 +263,15 @@ async def technical_result(raw: str) -> CommandResult:
         return CommandResult("用法：技术分析 600519 或 技术分析 周k 贵州茅台")
     data = await get_runtime().market.technical(query, period)
     symbol = data.get("symbol") or {}
-    ind = data.get("indicators") or {}
+    def number(key: str) -> str:
+        value = (data.get("indicators") or {}).get(key)
+        return f"{value:.3f}" if isinstance(value, (int, float)) else "—"
+
     lines = [
         f"【技术分析】{symbol.get('name')}({symbol.get('code')}) · {period}",
         f"评分 {data.get('score'):+.3f}，收盘 {data.get('price')}",
-        f"MA20 {ind.get('ma20')} / MA60 {ind.get('ma60')}，"
-        f"MACD {ind.get('macd_bar')}，RSI12 {ind.get('rsi12')}，KDJ {ind.get('kdj_j')}",
+        f"MA20 {number('ma20')} / MA60 {number('ma60')}，"
+        f"MACD {number('macd_bar')}，RSI12 {number('rsi12')}，KDJ {number('kdj_j')}",
         "多头信号: " + ("、".join(data.get("signals") or []) or "暂无"),
         "风险信号: " + ("、".join(data.get("risks") or []) or "暂无"),
     ]
@@ -450,11 +447,11 @@ async def report_result(ue: UnifiedEvent, raw: str) -> CommandResult:
         owner=ue.user_id,
         meta={"session_id": ue.session_id},
     )
-    return CommandResult(
-        f"【{symbol} 研究报告】技术评分 {technical.get('score'):+.3f}" + _artifact_link_note([artifact]),
-        None,
-        [artifact],
-    )
+    image = await _render(html, 960) if ue.platform != "qweb" else None
+    text = f"【{symbol} 研究报告】技术评分 {technical.get('score'):+.3f}"
+    if image is None and ue.platform != "qweb":
+        text = markdown
+    return CommandResult(text, image, [artifact])
 
 
 _COMMAND_ALIASES = {
@@ -512,7 +509,7 @@ async def execute(text: str, ue: UnifiedEvent) -> CommandResult:
     if intent == "screen":
         return await screen_result(arg)
     if intent == "news":
-        return await news_result()
+        return await news_result(owner=ue.user_id, with_image=ue.platform != "qweb")
     if intent == "financial":
         return await financial_result(arg)
     if intent == "valuation":
@@ -534,15 +531,13 @@ async def execute(text: str, ue: UnifiedEvent) -> CommandResult:
 
 async def deliver(ue: UnifiedEvent, result: CommandResult) -> None:
     """Deliver a command result to the originating chat."""
-    text = result.with_links()
-    if result.image is not None:
-        sent = await send_image(ue, result.image, caption="")
-        if sent:
-            if text:
-                await send_text(ue, text)
-            return
-    if text:
-        await send_text(ue, text)
+    images = ([result.image] if result.image else []) + result.extra_images
+    if ue.group_id or ue.guild_id or ue.channel_id:
+        await send_group_result(ue, "" if images and result.image_only else result.text, images)
+        return
+    for image in images:
+        await send_image(ue, image)
+    await send_text(ue, result.with_links())
 
 
 __all__ = [

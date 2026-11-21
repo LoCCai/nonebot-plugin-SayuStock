@@ -57,3 +57,39 @@ async def test_qq_image_uses_local_attachment():
     assert await send_image(ue, PNG) is True
     assert bot.sent
     assert bot.sent[0].type == "file_image"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("text","images","types"), [
+    ("行情", [], ["text"]),
+    ("日k\n贵州茅台: +2.52%", [PNG], ["image", "text"]),
+    ("", [PNG, PNG], ["image", "image"]),
+])
+async def test_group_forward_one_envelope(text, images, types):
+    from nonebot.adapters.onebot.v11 import Message
+
+    from nonebot_plugin_sayustock.commands import CommandResult, deliver
+
+    class GroupBot(SendingBot):
+        async def call_api(self, api, **data):
+            assert api == "send_group_forward_msg" and data["group_id"] == 99
+            self.sent.append(data["messages"])
+            return {"message_id": 1}
+
+    bot = GroupBot("OneBot V11")
+    result = CommandResult(text, next(iter(images), None), extra_images=images[1:])
+    await deliver(from_event(bot, FakeEvent()), result)
+    assert len(bot.sent) == 1
+    nodes = bot.sent[0]
+    assert [Message(node["data"]["content"])[0].type for node in nodes] == types
+    if text:
+        assert nodes[-1]["data"]["content"][0].data["text"] == text
+
+
+@pytest.mark.asyncio
+async def test_news_card_sent_once_without_fallback_text():
+    from nonebot_plugin_sayustock.commands import CommandResult, deliver
+
+    bot = SendingBot("OneBot V11")
+    await deliver(from_event(bot, FakeEvent()), CommandResult("财经快讯", PNG, image_only=True))
+    assert len(bot.sent) == 1 and bot.sent[0].type == "image"

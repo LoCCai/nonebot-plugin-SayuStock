@@ -11,14 +11,18 @@ from ..runtime import get_runtime, artifact_url
 from .contracts import ToolContext, ToolOutcome, ToolDefinition
 from ..artifacts import create_png, create_html
 from ..watchlist import owner_key
+from ..services.theme import apply_theme
 from ..services.charts import (
     ChartRenderError,
+    news_card,
     rasterize,
     overview_html,
+    dashboard_html,
     build_kline_html,
     build_report_html,
     build_compare_html,
     build_intraday_html,
+    compare_series_html,
 )
 from ..services.market import MarketServiceError
 from ..services.dataviz import (
@@ -111,12 +115,13 @@ async def _chart_artifacts(
     width: int,
     ctx: ToolContext,
     with_png: bool = True,
+    kind: str = "chart",
 ) -> tuple[bytes | None, list[Any]]:
     artifacts = [
         create_html(
             title,
             html,
-            kind="chart",
+            kind=kind,
             owner=ctx.user_id,
             meta={"session_id": ctx.session_id},
         )
@@ -135,7 +140,7 @@ async def _chart_artifacts(
 
 
 def _artifact_note(ctx: ToolContext, artifacts: list[Any]) -> str:
-    if not artifacts:
+    if ctx.platform != "qweb" or not artifacts:
         return ""
     from ..config import get_value
 
@@ -258,7 +263,7 @@ async def compare_tool(
     image = None
     artifacts: list[Any] = []
     if include_chart:
-        html, width, title = await build_compare_html(runtime.market, queries, period)
+        html, width, title = compare_series_html(data["series"])
         image, artifacts = await _chart_artifacts(title=title, html=html, width=width, ctx=_tool_context)
     return ToolOutcome(
         text="\n".join(lines) + _artifact_note(_tool_context, artifacts),
@@ -405,17 +410,18 @@ async def generate_report_tool(
     _tool_context: ToolContext,
 ) -> ToolOutcome:
     html = await build_report_html(title, markdown, meta=meta)
-    artifact = create_html(
-        title,
-        html,
+    image, artifacts = await _chart_artifacts(
+        title=title,
+        html=html,
+        width=960,
+        ctx=_tool_context,
         kind="report",
-        owner=_tool_context.user_id,
-        meta={"session_id": _tool_context.session_id},
     )
     return ToolOutcome(
-        text=f"已生成 HTML 研究报告：{title}" + _artifact_note(_tool_context, [artifact]),
+        text=f"研究报告：{title}" + _artifact_note(_tool_context, artifacts),
         structured={"title": title, "markdown": markdown},
-        artifacts=[artifact],
+        images=[image] if image else [],
+        artifacts=artifacts,
     )
 
 
@@ -503,12 +509,21 @@ async def ipo_tool(*, market: str = "cn", _tool_context: ToolContext) -> ToolOut
 
 async def news_tool(*, limit: int = 12, _tool_context: ToolContext) -> ToolOutcome:
     data = await get_runtime().market.news(limit=max(1, min(limit, 50)))
-    items = data.get("items") or []
-    lines = [f"【{data.get('source_label') or data.get('source')} 快讯】{len(items)} 条"]
-    for item in items[:limit]:
-        prefix = "🔴" if item.get("important") else "·"
-        lines.append(f"{prefix} {item.get('title') or item.get('text')}")
-    return ToolOutcome(text="\n".join(lines), structured=data)
+    html, text = news_card(data, limit)
+    image, artifacts = await _chart_artifacts(
+        title="财经快讯",
+        html=html,
+        width=880,
+        ctx=_tool_context,
+        kind="news",
+    )
+    return ToolOutcome(
+        text=text + _artifact_note(_tool_context, artifacts),
+        structured=data,
+        images=[image] if image else [],
+        artifacts=artifacts,
+        metadata={"provider": data.get("source"), "count": len(data.get("items") or [])},
+    )
 
 
 async def plot_series_tool(
@@ -537,6 +552,7 @@ async def plot_series_tool(
         if kind == "bar"
         else line_chart_html(title=title, labels=x_labels, series=normalized, y_label=y_label, note=note)
     )
+    html = apply_theme(html, recolor=True)
     image, artifacts = await _chart_artifacts(title=title, html=html, width=1100, ctx=_tool_context)
     summary = series_summary(normalized)
     lines = [f"【{title}】共 {len(normalized)} 组、{count} 个数据点"]
@@ -561,7 +577,7 @@ async def pie_chart_tool(
     note: str = "",
     _tool_context: ToolContext,
 ) -> ToolOutcome:
-    html = pie_chart_html(title=title, labels=labels, values=values, note=note)
+    html = apply_theme(pie_chart_html(title=title, labels=labels, values=values, note=note), recolor=True)
     image, artifacts = await _chart_artifacts(title=title, html=html, width=900, ctx=_tool_context)
     total = sum(value for value in values if isinstance(value, (int, float)))
     lines = [f"【{title}】合计 {total:,.2f}"]
@@ -587,18 +603,52 @@ async def data_table_tool(
     if not columns:
         raise MarketServiceError("columns 不能为空")
     normalized_rows = [list(row) for row in rows[:300]]
-    html = table_html(title=title, columns=columns, rows=normalized_rows, note=note)
-    artifact = create_html(
-        title,
-        html,
+    html = apply_theme(table_html(title=title, columns=columns, rows=normalized_rows, note=note), recolor=True)
+    image, artifacts = await _chart_artifacts(
+        title=title,
+        html=html,
+        width=1100,
+        ctx=_tool_context,
         kind="table",
-        owner=_tool_context.user_id,
-        meta={"rows": len(normalized_rows)},
     )
     return ToolOutcome(
-        text=f"【{title}】共 {len(normalized_rows)} 行" + _artifact_note(_tool_context, [artifact]),
+        text=f"【{title}】共 {len(normalized_rows)} 行" + _artifact_note(_tool_context, artifacts),
         structured={"columns": columns, "rows": normalized_rows},
-        artifacts=[artifact],
+        images=[image] if image else [],
+        artifacts=artifacts,
+    )
+
+
+async def dashboard_tool(
+    *,
+    title: str,
+    metrics: list[dict[str, Any]],
+    tables: list[dict[str, Any]],
+    note: str = "",
+    _tool_context: ToolContext,
+) -> ToolOutcome:
+    data = {
+        "title": title,
+        "metrics": metrics,
+        "tables": tables,
+        "notes": [note] if note else [],
+    }
+    html = dashboard_html(data, title=title)
+    image, artifacts = await _chart_artifacts(
+        title=title,
+        html=html,
+        width=1100,
+        ctx=_tool_context,
+        kind="dashboard",
+    )
+    metrics_count = len(metrics)
+    rows_count = sum(len(table.get("rows") or []) for table in tables if isinstance(table, dict))
+    text = f"【{title}】{metrics_count} 个指标、{rows_count} 行数据" + _artifact_note(_tool_context, artifacts)
+    return ToolOutcome(
+        text=text,
+        structured={"title": title, "metrics": metrics, "tables": tables},
+        images=[image] if image else [],
+        artifacts=artifacts,
     )
 
 
@@ -630,10 +680,13 @@ async def analyze_series_tool(
     artifacts: list[Any] = []
     if include_chart and normalized:
         count = max((len(item["values"]) for item in normalized), default=0)
-        html = line_chart_html(
-            title=title,
-            labels=[str(index + 1) for index in range(count)],
-            series=normalized,
+        html = apply_theme(
+            line_chart_html(
+                title=title,
+                labels=[str(index + 1) for index in range(count)],
+                series=normalized,
+            ),
+            recolor=True,
         )
         image, artifacts = await _chart_artifacts(title=title, html=html, width=1100, ctx=_tool_context)
     return ToolOutcome(
@@ -1101,6 +1154,69 @@ register(
         },
         handler=data_table_tool,
         timeout_seconds=30,
+    )
+)
+register(
+    ToolDefinition(
+        name="sayustock_dashboard",
+        description=(
+            "把多组指标卡和数据表组合成一张股票看板 HTML，网页可打开同一制品，群聊可发 PNG。"
+            "适合每日复盘、持仓概览、选股结果与财务对比；不执行交易。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "minLength": 1, "maxLength": 120},
+                "metrics": {
+                    "type": "array",
+                    "maxItems": 12,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "label": {"type": "string", "maxLength": 40},
+                            "value": {"type": ["string", "number"]},
+                            "change_pct": {"type": "number"},
+                            "note": {"type": "string", "maxLength": 120},
+                        },
+                        "required": ["label", "value"],
+                        "additionalProperties": False,
+                    },
+                },
+                "tables": {
+                    "type": "array",
+                    "maxItems": 8,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "title": {"type": "string", "maxLength": 60},
+                            "columns": {
+                                "type": "array",
+                                "items": {"type": "string", "maxLength": 40},
+                                "minItems": 1,
+                                "maxItems": 20,
+                            },
+                            "rows": {
+                                "type": "array",
+                                "maxItems": 300,
+                                "items": {
+                                    "type": "array",
+                                    "maxItems": 20,
+                                    "items": {"type": ["string", "number", "boolean", "null"]},
+                                },
+                            },
+                            "note": {"type": "string", "maxLength": 500},
+                        },
+                        "required": ["columns", "rows"],
+                        "additionalProperties": False,
+                    },
+                },
+                "note": {"type": "string", "maxLength": 500, "default": ""},
+            },
+            "required": ["title", "metrics", "tables"],
+            "additionalProperties": False,
+        },
+        handler=dashboard_tool,
+        timeout_seconds=45,
     )
 )
 register(
