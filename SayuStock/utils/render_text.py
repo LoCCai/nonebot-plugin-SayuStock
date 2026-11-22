@@ -22,7 +22,7 @@ from datetime import date
 import pandas as pd
 
 from .indicators import swing_stats, normalize_pct, compute_indicators
-from .render_data import IpoCalendarRow, IpoCalendarRenderData
+from .render_data import IpoCalendarRow, IpoCalendarRenderData, cloudmap_title
 from .market.enums import IpoStage
 from .market.models import KlineSeries, BoardSnapshot, IntradaySeries
 from .market.convert.dataframe import kline_to_df
@@ -383,15 +383,15 @@ def cloudmap_text(
         return ""
     valid.sort(key=lambda r: float(r.change_pct or 0), reverse=True)
 
-    title = market or "板块云图"
-    if sector and market not in ("大盘云图",):
-        title = f"{market} - {sector}"
+    title = cloudmap_title(market, sector)
 
     def _row(item) -> str:
         ind = item.industry or "-"
         return f"  {item.name}({ind}): {item.change_pct}%"
 
     lines = [f"【{title}】共 {len(valid)} 个标的"]
+    if snap.coverage:
+        lines.append(snap.coverage)
     if len(valid) <= top_n * 2:
         lines.append("全部（按涨跌幅降序）:")
         lines.extend(_row(i) for i in valid)
@@ -406,9 +406,9 @@ def cloudmap_text(
     limit_up = sum(1 for i in valid if float(i.change_pct or 0) >= 9.8)
     limit_down = sum(1 for i in valid if float(i.change_pct or 0) <= -9.8)
     avg = sum(float(i.change_pct or 0) for i in valid) / len(valid)
+    limits = "" if sector in ("港股", "美股") else f"涨停约 {limit_up} 家, 跌停约 {limit_down} 家；"
     lines.append(
-        f"统计: 上涨 {up} 家, 下跌 {down} 家, 平盘 {len(valid) - up - down} 家；"
-        f"涨停约 {limit_up} 家, 跌停约 {limit_down} 家；平均涨跌幅 {avg:+.2f}%"
+        f"统计: 上涨 {up} 家, 下跌 {down} 家, 平盘 {len(valid) - up - down} 家；{limits}平均涨跌幅 {avg:+.2f}%"
     )
     return "\n".join(lines)
 

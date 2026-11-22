@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from typing import Mapping
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from ...enums import AssetClass
 from ...errors import MarketError, empty_error, parse_error
@@ -113,6 +115,12 @@ def parse_quote_payload(
         provider_symbol=provider_symbol,
         sec_type=(sec_type or "").strip(),
     )
+    hong_kong = symbol.exchange == "HKEX"
+    as_of = None
+    if hong_kong:
+        stamp = opt_float(data, "f86")
+        if stamp is not None and 0 < stamp < 4102444800:
+            as_of = datetime.fromtimestamp(stamp, ZoneInfo("Asia/Hong_Kong"))
     return Quote(
         symbol=symbol,
         price=price,
@@ -127,12 +135,12 @@ def parse_quote_payload(
         turnover_rate=opt_float(data, QUOTE_FIELD["turnover_rate"]),
         pe=pe,
         pb=pb,
-        market_cap=opt_float(data, QUOTE_FIELD["market_cap"]),
-        float_market_cap=opt_float(data, QUOTE_FIELD["float_market_cap"]),
+        market_cap=opt_float(data, "f116" if hong_kong else QUOTE_FIELD["market_cap"]),
+        float_market_cap=opt_float(data, "f117" if hong_kong else QUOTE_FIELD["float_market_cap"]),
         industry=industry,
         limit_up=opt_float(data, QUOTE_FIELD["limit_up"]),
         limit_down=opt_float(data, QUOTE_FIELD["limit_down"]),
-        as_of=None,
+        as_of=as_of,
     )
 
 

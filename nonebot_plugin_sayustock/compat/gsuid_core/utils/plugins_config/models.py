@@ -41,6 +41,7 @@ class GsBoolConfig(GSC):
 class GsListStrConfig(GSC):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
+        self.options = list(kwargs.get("options") or [])
         if self.data is None:
             self.data = []
 

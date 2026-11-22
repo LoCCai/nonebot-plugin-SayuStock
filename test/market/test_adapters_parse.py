@@ -156,6 +156,14 @@ def test_eastmoney_quote_f45_fallback_and_intraday() -> None:
     no_name = parse_quote_payload({"data": {"f57": "609999", "f43": 106.0, "f60": 100.0}}, provider_symbol="1.609999")
     assert not is_market_error(no_name) and no_name.symbol.name == "609999"
 
+    hk = parse_quote_payload(
+        {"data": {"f57": "01810", "f43": 27.64, "f86": 1795162107, "f116": 711471338163.48, "f20": 8750}},
+        provider_symbol="116.01810",
+        sec_type="港股",
+    )
+    assert not is_market_error(hk) and hk.market_cap == 711471338163.48
+    assert hk.as_of is not None and hk.as_of.isoformat() == "2026-11-20T16:08:27+08:00"
+
 
 def test_eastmoney_kline_board_finance_and_sort_order() -> None:
     """东财 K 线、板块、财务快照解析与 board/rank_list po 排序参数映射。"""
@@ -551,6 +559,35 @@ def test_tencent_parse_qt_kline_and_ndays() -> None:
         adjusted=True,
     )
     assert not is_market_error(kl) and kl.bars[0].volume == 2489100.0
+
+    hk = _sym("116.01810", "01810", sec_type="港股")
+    assert tencent_symbol_from_secid(hk.provider_symbol) == "hk01810"
+    row = ["2026-11-20", "28.20", "27.64", "28.30", "27.40", "157739608"]
+    for field in ("day", "qfqday"):
+        node = {field: [row], "qt": {"hk01810": ["100", "小米集团-W", "01810"]}}
+        series = parse_tencent_kline_payload(
+            {"data": {"hk01810": node}},
+            symbol=hk,
+            tencent_symbol="hk01810",
+            period=KlinePeriod.D1,
+            unit="day",
+            adjusted=True,
+        )
+        assert not is_market_error(series) and series.symbol.name == "小米集团-W"
+        assert series.adjusted == (field == "qfqday") and series.as_of == "2026-11-20"
+        assert (series.bars[0].close, series.bars[0].volume) == (27.64, 157739608)
+    fields = [""] * 60
+    fields[1:6] = ["小米集团-W", "01810", "27.64", "28.52", "28.20"]
+    fields[30:38] = ["2026/11/20 16:08:31", "-0.88", "-3.09", "28.30", "27.40", "", "157739608", "4370247269.08"]
+    fields[59] = "0.74"
+    quote = parse_qt_line_hk("~".join(fields), symbol=hk)
+    assert (
+        not is_market_error(quote)
+        and quote.as_of is not None
+        and quote.as_of.isoformat() == "2026-11-20T16:08:31+08:00"
+    )
+    assert (quote.volume, quote.amount, quote.turnover_rate) == (157739608, 4370247269.08, 0.74)
+    assert is_market_error(parse_qt_line_hk("~".join(fields), symbol=_sym("116.00700")))
 
     bars = [
         Bar(

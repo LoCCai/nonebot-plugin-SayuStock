@@ -11,7 +11,8 @@ from zoneinfo import ZoneInfo
 from functools import lru_cache
 
 from PIL import Image, ImageOps
-from jinja2 import Environment, FileSystemLoader
+
+from SayuStock.render.templates import render_template
 
 ART_SLOT = "<!--stock-heading-art-->"
 FOOTER_SLOT = "<!--stock-report-footer-->"
@@ -29,11 +30,6 @@ def _thumbnail(path: Path, size: tuple[int, int], stamp: int) -> str:
 
 def _image(path: Path, size: tuple[int, int]) -> str:
     return _thumbnail(path, size, path.stat().st_mtime_ns)
-
-
-@lru_cache(maxsize=1)
-def _footer_templates(root: Path) -> Environment:
-    return Environment(loader=FileSystemLoader(root / "src/plugins/qi_post/template"), autoescape=True)
 
 
 def _selected_image(selected: Path | None, default: Path, size: tuple[int, int]) -> str:
@@ -58,16 +54,12 @@ def apply_frame(document: str) -> str:
     root = seasonal_artwork.ROOT
     chosen = decorative_image("shared", now=now)
     default_art = seasonal_artwork.asset_path(seasonal_artwork.day_selection(now)["hero_id"], "full")
-    art = _selected_image(image_path(chosen, "full") if chosen else None, default_art, (720, 340))
+    art = _selected_image(image_path(chosen, "full") if chosen else None, default_art, (1280, 680))
     portraits = seasonal_artwork.seasonal_portraits(now)
     footer_data = {}
     for actor, field in (("developer", "developer"), ("qiqi", "qiqi"), ("sayu", "zaoyou")):
         default = root / f"qcard/assets/footer-{actor}.jpg"
         footer_data[f"footer_{field}_avatar"] = _selected_image(portraits.get(actor), default, (144, 144))
-    footer = (
-        _footer_templates(root)
-        .get_template("_footer.j2")
-        .render(**footer_data, now_time=now.strftime("%Y-%m-%d %H:%M"))
-    )
+    footer = render_template("stock_footer.html", **footer_data, now_time=now.strftime("%Y-%m-%d %H:%M:%S"))
     head, _, tail = document.rpartition(FOOTER_SLOT)
     return head.replace(ART_SLOT, f'<img class="stock-heading-art" src="{art}" alt="七七插图">', 1) + footer + tail

@@ -107,6 +107,10 @@ async def build_kline_html(service: MarketService, query: str, period: str = "�
     result = await service.market.kline(query, normalize_period(period))
     if not isinstance(result, KlineSeries):
         raise MarketServiceError(getattr(result, "message", "K 线获取失败"))
+    return kline_series_html(result, period, context=context)
+
+
+def kline_series_html(result: KlineSeries, period: str, *, context: Mapping[str, Any] | None = None) -> tuple[str, int, str]:
     page = prepare_kline(result)
     html = chart_from_page(page, context=context)
     if html is None:
@@ -123,7 +127,7 @@ async def build_intraday_html(service: MarketService, query: str, ndays: int = 1
     html = chart_from_page(page, context=context)
     if html is None:
         raise MarketServiceError(str(page))
-    return html, page.width, f"{result.symbol.display_name} · 分时"
+    return html, page.width, page.title
 
 
 async def build_multi_intraday_html(service: MarketService, queries: list[str], ndays: int = 1, *, context: Mapping[str, Any] | None = None) -> tuple[str, int, str]:
@@ -137,7 +141,7 @@ async def build_multi_intraday_html(service: MarketService, queries: list[str], 
     html = chart_from_page(page, context=context)
     if html is None:
         raise MarketServiceError(str(page))
-    return html, page.width, "多股分时对比"
+    return html, page.width, page.title
 
 
 async def build_compare_html(service: MarketService, queries: list[str], period: str = "日k", *, context: Mapping[str, Any] | None = None) -> tuple[str, int, str]:
@@ -158,7 +162,7 @@ def compare_series_html(series: list[KlineSeries], *, context: Mapping[str, Any]
     html = chart_from_page(page, context=context)
     if html is None:
         raise MarketServiceError(str(page))
-    return html, page.width, "个股走势对比"
+    return html, page.width, page.title
 
 
 def overview_html(data: dict[str, Any], *, width: int = 1280, context: Mapping[str, Any] | None = None) -> str:
@@ -197,7 +201,7 @@ def overview_html(data: dict[str, Any], *, width: int = 1280, context: Mapping[s
     mood_image = f'<img class="flow-image" src="{mood_uri(number)}" alt="市场情绪">' if number else ""
     flow = data.get("main_flow_uri") or ""
     flow_html = (f'<img class="flow-image" src="{_esc(flow)}" alt="东财主力净流入">'
-                 if flow.startswith("data:image/png;base64,") else "暂缺主力资金图")
+                 if flow.startswith("data:image/png;base64,") else "")
 
     def sector_rows(rows: list[dict[str, Any]], *, falling: bool = False) -> str:
         member = "fall_name" if falling else "lead_name"
@@ -240,8 +244,8 @@ color:var(--text);font:14px/1.55 "Microsoft YaHei","PingFang SC",system-ui,sans-
 header{{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;margin-bottom:22px}}
 h1{{font-size:26px;margin:0;letter-spacing:.5px}}h1 span{{color:var(--gold)}}
 .sub{{color:var(--muted);font-size:12px}}.up{{color:var(--up)}}.down{{color:var(--down)}}.flat{{color:var(--flat)}}
-.grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px}}
-.index-card{{background:linear-gradient(160deg,var(--panel2),var(--panel));border:1px solid var(--line);
+.grid{{display:flex;flex-wrap:wrap;gap:12px}}
+.index-card{{flex:1 1 clamp(145px,18vw,200px);min-width:0;background:linear-gradient(160deg,var(--panel2),var(--panel));border:1px solid var(--line);
 border-radius:14px;padding:14px 15px;position:relative;overflow:hidden}}
 .index-card:before{{content:"";position:absolute;inset:0 auto 0 0;width:3px;background:var(--flat)}}
 .index-card.up:before{{background:var(--up)}}.index-card.down:before{{background:var(--down)}}
@@ -254,7 +258,9 @@ border-radius:14px;padding:14px 15px;position:relative;overflow:hidden}}
 .stat span{{color:var(--muted);font-size:12px}}
 .band-chart{{width:100%;max-height:240px;display:block}}.band-chart text{{text-anchor:middle;fill:var(--text);font-size:14px}}
 .band-up rect{{fill:var(--up)}}.band-down rect{{fill:var(--down)}}.band-flat rect{{fill:var(--flat)}}
-.flow-image{{max-width:100%;height:auto}}.breadth-legend{{color:var(--muted)}}
+.overview-media{{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(310px,100%),1fr));gap:16px}}
+.overview-media figure{{margin:0;min-width:0}}.overview-media figcaption{{font-size:17px;font-weight:650;margin-bottom:10px}}
+.flow-image{{display:block;width:100%;height:auto;border-radius:10px}}.breadth-legend{{color:var(--muted)}}
 .tables{{display:grid;grid-template-columns:repeat(2,1fr);gap:18px}}
 table{{width:100%;border-collapse:collapse;font-size:12px}}th,td{{padding:7px 6px;border-bottom:1px solid var(--line);text-align:left}}
 th{{color:var(--muted);font-weight:500}}.num{{text-align:right;font-variant-numeric:tabular-nums}}
@@ -272,7 +278,9 @@ background:var(--warn-bg);color:var(--warn-text);font-size:12px}}
   <div class="stat"><b>{north}</b><span>北向资金净流入</span></div>
   <div class="stat"><b>{up_share}</b><span>上涨占比</span></div>
 </div>
-<div class="panel"><h2>{_esc(mood_label)}</h2>{mood_image}<div>主力资金 · 东方财富</div>{flow_html}</div>
+<section class="panel overview-media"><figure><figcaption>{_esc(mood_label)}</figcaption>{mood_image}</figure>
+{('<figure><figcaption>主力资金 · 东方财富</figcaption>' + flow_html + '</figure>') if flow_html else ''}</section>
+{'' if flow_html else '<div class="sub">主力资金图暂缺 · 东方财富</div>'}
 <div class="panel tables">
   <div><h2>行业领涨</h2><table><thead><tr><th>板块</th><th class="num">涨跌幅</th><th>领涨</th><th class="num">涨幅</th></tr></thead>
   <tbody>{sector_rows(industry_rise)}</tbody></table></div>

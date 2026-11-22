@@ -290,7 +290,7 @@ class EastMoneyRequester:
                     self.now_queue -= 1
                 if req_url == urls[-1]:
                     return -400016
-                self._notice("fallback", f"[SayuStock][EM] 请求 {req_url} 失败, 尝试切换到备用域名...")
+                logger.debug(f"[SayuStock][EM] {req_url} 失败，切换备用域名")
         return -400016
 
     async def resolve_stock(self, query: str) -> Optional[EastMoneyStockItem]:
@@ -447,6 +447,9 @@ class EastMoneyRequester:
             东方财富个股实时行情 JSON，并附加 `trends` 分时数组；找不到标的
             或请求失败时返回错误文本。
         """
+        fields = SINGLE_STOCK_FIELDS
+        if sec_id.startswith("116."):
+            fields = fields + ["f86", "f116", "f117", "f162", "f167"]
         params: List[Tuple[str, Any]] = [
             ("pz", "200"),
             ("po", "1"),
@@ -456,7 +459,7 @@ class EastMoneyRequester:
             ("fid", "f3"),
             ("pn", "1"),
             ("secid", sec_id),
-            ("fields", ",".join(SINGLE_STOCK_FIELDS)),
+            ("fields", ",".join(fields)),
         ]
         url = "https://push2.eastmoney.com/api/qt/stock/get"
         resp = await self.stock_request(url, "GET", params=params)
@@ -1008,24 +1011,28 @@ class EastMoneyRequester:
         if isinstance(resp, int):
             return f"[SayuStock] 错误代码: {resp}"
 
-        if is_loop and resp["data"] and len(resp["data"]["diff"]) >= 100:
-            stop_event = asyncio.Event()
-            pn = 2
-            tasks = []
-            params.remove(("pn", "1"))
-            params.remove(("pz", "100"))
-            params.append(("pz", str(len(resp["data"]["diff"]))))
-
-            while not stop_event.is_set():
-                for _ in range(10):
-                    page_params = params.copy()
-                    page_params.append(("pn", str(pn)))
-                    tasks.append(self._append_market_page(resp, url, page_params, stop_event))
-                    pn += 1
-                await asyncio.gather(*tasks)
-                tasks.clear()
-
-            await asyncio.gather(*tasks)
+        if is_loop:
+            data = resp.get("data")
+            if not isinstance(data, dict) or not isinstance(data.get("diff"), list):
+                return "行情列表暂不可用"
+            rows, total = data["diff"], data.get("total")
+            if not rows or not isinstance(total, int):
+                return "行情列表缺少成分或总数"
+            page_size = len(rows)
+            last_page = (total + page_size - 1) // page_size
+            common = [(k, v) for k, v in params if k not in ("pn", "pz")]
+            for start in range(2, last_page + 1, 3):
+                requests = [
+                    self.stock_request(url, params=[*common, ("pz", str(page_size)), ("pn", str(n))])
+                    for n in range(start, min(start + 3, last_page + 1))
+                ]
+                for page in await asyncio.gather(*requests):
+                    part = page.get("data") if isinstance(page, dict) else None
+                    if not isinstance(part, dict) or not isinstance(part.get("diff"), list) or not part["diff"]:
+                        return "行情分页未完整返回"
+                    rows.extend(part["diff"])
+            if len(rows) < total:
+                return "行情分页未完整返回"
 
         return resp
 
@@ -1061,6 +1068,39 @@ class EastMoneyRequester:
                 stop_event.set()
             return
         stop_event.set()
+
+    @async_file_cache(market="em-concept-members", sector="{code}", suffix="json", minutes=1440)
+    async def concept_member_codes(self, code: str) -> list[str] | str:
+        if not re.fullmatch(r"BK[0-9]+", code):
+            return "概念板块编号无效"
+        url = "https://datacenter-web.eastmoney.com/api/data/v1/get"
+        params = {
+            "reportName": "RPT_F10_CORETHEME_BOARDTYPE",
+            "filter": f'(NEW_BOARD_CODE="{code}")',
+            "columns": "SECURITY_CODE,NEW_BOARD_CODE",
+            "sortColumns": "SECURITY_CODE",
+            "sortTypes": "1",
+            "pageSize": "500",
+        }
+        codes: set[str] = set()
+        page = 1
+        while True:
+            reply = await self.stock_request(url, params={**params, "pageNumber": str(page)})
+            result = reply.get("result") if isinstance(reply, dict) else None
+            if not isinstance(result, dict) or not isinstance(result.get("data"), list):
+                return "概念成分名单暂不可用"
+            before = len(codes)
+            for row in result["data"]:
+                if isinstance(row, dict) and row.get("NEW_BOARD_CODE") == code:
+                    symbol = row.get("SECURITY_CODE")
+                    if isinstance(symbol, str) and re.fullmatch(r"[0-9]{6}", symbol):
+                        codes.add(symbol)
+            pages, count = result.get("pages"), result.get("count")
+            if not isinstance(pages, int) or not isinstance(count, int) or len(codes) == before:
+                return "概念成分名单不完整"
+            if page >= pages:
+                return sorted(codes) if len(codes) == count else "概念成分名单不完整"
+            page += 1
 
     @async_file_cache(market="大盘云图", sector="大盘云图", suffix="json", minutes=5)
     async def get_hotmap(self) -> Union[Dict[str, Any], str]:

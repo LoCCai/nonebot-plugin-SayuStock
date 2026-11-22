@@ -64,7 +64,7 @@ def _parse_us_or_cn(line: str, *, qt_sym: str, symbol: SymbolRef) -> Quote | Mar
         return parse_qt_line_hf(line, symbol=symbol)
     if qt_sym.startswith(("fx", "wh")):
         return parse_qt_line_fx(line, symbol=symbol)
-    if qt_sym.startswith("hk") and not qt_sym[2:].isdigit():
+    if qt_sym.startswith("hk"):
         return parse_qt_line_hk(line, symbol=symbol)
     if qt_sym.startswith("us"):
         return parse_qt_line_us(line, symbol=symbol)
@@ -77,6 +77,8 @@ def _spot_only(symbol: SymbolRef, qt_sym: str, *, kind: str) -> MarketError | No
         return unsupported("腾讯该品种仅有盘口", provider=PROVIDER)
     if qt_sym.startswith("us"):
         return unsupported(f"腾讯美股不支持{kind}（仅盘口）", provider=PROVIDER)
+    if qt_sym.startswith("hk") and kind != "K线":
+        return unsupported(f"腾讯港股暂不提供{kind}", provider=PROVIDER)
     return None
 
 
@@ -97,7 +99,6 @@ class TencentMarketData(PartialMarketData):
         if ref is None:
             return not_found(ErroText["notStock"], provider=PROVIDER)
         if tencent_symbol_from_secid(ref.provider_symbol) is None:
-            # 港股/期货等暂不覆盖，交给注册表回落
             return unsupported(f"腾讯不支持 {ref.provider_symbol}", provider=PROVIDER)
         return ref
 
@@ -230,7 +231,7 @@ class TencentMarketData(PartialMarketData):
             return symbol
         qt_sym = tencent_symbol_from_secid(symbol.provider_symbol)
         assert qt_sym is not None
-        spot = _spot_only(symbol, qt_sym, kind="K线")
+        spot = _spot_only(symbol, qt_sym, kind="分钟K线" if minute_unit else "K线")
         if spot is not None:
             return spot
         datalen = _PERIOD_BARS.get(period, 400)

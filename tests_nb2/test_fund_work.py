@@ -31,7 +31,7 @@ def test_features_are_group_commands_with_real_usage():
 @pytest.mark.asyncio
 async def test_cloudmap_dispatch_builds_themed_owned_artifact(fake_market) -> None:
     result = await fundwork.dispatch("大盘云图", "", _event())
-    assert result.text.startswith("【大盘云图】")
+    assert result.text.startswith("【大盘云图 · A股】")
     assert result.image is None
     assert len(result.artifacts) == 1
     artifact = result.artifacts[0]
@@ -50,10 +50,30 @@ async def test_cloudmap_dispatch_builds_themed_owned_artifact(fake_market) -> No
 
 
 @pytest.mark.asyncio
-async def test_qweb_cloudmap_skips_png_but_keeps_html(fake_market) -> None:
-    result = await fundwork.dispatch("大盘云图", "", _event("qweb"))
-    assert result.image is None
-    assert result.artifacts and result.artifacts[0].owner == "10001"
+async def test_qweb_cloudmap_skips_png_but_keeps_html(fake_market, monkeypatch) -> None:
+    from SayuStock.utils.market.enums import BoardKind
+    from SayuStock.utils.market.errors import network_error
+    from nonebot_plugin_sayustock.artifacts import get_artifact
+
+    for argument, label in (("", "A股"), ("hk", "港股"), ("美股", "美股")):
+        result = await fundwork.dispatch("大盘云图", argument, _event("qweb"))
+        title = f"大盘云图 · {label}"
+        assert result.image is None
+        artifact = result.artifacts[0]
+        assert artifact.owner == "10001" and artifact.title == title
+        document = get_artifact(artifact.id, owner="10001")[1].read_text()
+        assert f"<h1>{title}</h1>" in document and result.text.startswith(f"【{title}】")
+        if label != "A股":
+            assert "涨停" not in result.text
+
+    async def failed_board(kind, *, sector, limit):
+        assert kind == BoardKind.HOTMAP and sector == "美股"
+        return network_error("东方财富: -400016", provider="eastmoney")
+
+    monkeypatch.setattr(fake_market, "board", failed_board)
+    failure = await fundwork.dispatch("大盘云图", "美股", _event("qweb"))
+    assert not failure.artifacts and "【大盘云图 · 美股】" in failure.text
+    assert "-400016" not in failure.text and "-400016" in failure.structured["error"]
 
 
 @pytest.mark.asyncio

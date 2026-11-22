@@ -92,7 +92,7 @@ def async_file_cache(
                     logger.warning(f"🚨 [SayuStock] 读取或解析缓存文件失败: {e}。将重新执行函数。")
 
             # 5. 如果文件不存在，执行原函数
-            logger.info(f"🚧 [SayuStock] 缓存未命中。正在执行函数 {func.__name__}...")
+            logger.debug(f"[SayuStock] 缓存未命中: {func.__name__}")
             result = await func(*args, **kwargs)
             if isinstance(result, (int, str)):
                 return result

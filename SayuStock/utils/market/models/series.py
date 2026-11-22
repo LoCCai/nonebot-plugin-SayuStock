@@ -57,3 +57,12 @@ class KlineSeries:
     adjusted: bool
     # 命中数据源 id（eastmoney/tencent/sina/okx/tiantian/vix），渲染层展示真实来源
     provider: str | None = None
+
+    @property
+    def as_of(self) -> str | None:
+        if not self.bars:
+            return None
+        stamp = self.bars[-1].ts
+        if self.period in (KlinePeriod.M5, KlinePeriod.M15, KlinePeriod.M30, KlinePeriod.M60):
+            return stamp.isoformat(timespec="minutes")
+        return stamp.date().isoformat()

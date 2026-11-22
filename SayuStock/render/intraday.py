@@ -166,7 +166,7 @@ def prepare_single_intraday(series: IntradaySeries) -> ChartPage | str:
     _money_bars(money, xs, [amounts], [bar_colors])
     quote = series.quote
     footer = source_footer(series.provider, quote.provider if quote is not None else None)
-    title = f"{data.stock_name}  {data.stock_code}"
+    title = f"{data.stock_name} {data.stock_code} · {data.ndays}日分时"
     legend = [
         Legend("最新价", TEXT, number_text(quote_price, digits)),
         Legend("今日涨跌", _change_color(data.today_change), percent_text(data.today_change)),
@@ -277,7 +277,7 @@ def prepare_multi_intraday(series_list: list[IntradaySeries]) -> ChartPage | str
     suffix = f" · {ndays}日累计 / 今日" if ndays > 1 else ""
     date_range = f"{dates[0]:%Y-%m-%d} — {dates[-1]:%Y-%m-%d}"
     return ChartPage(
-        "分时涨跌幅对比",
+        f"{ndays}日分时对比 · " + "、".join(item.label for item in legend),
         f"{ndays}日分时",
         f"{date_range} · {len(legend)} 只标的{suffix}",
         [price, money],

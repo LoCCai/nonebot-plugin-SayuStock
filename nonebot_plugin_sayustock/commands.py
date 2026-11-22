@@ -136,7 +136,7 @@ async def compare_result(
     )
     html, width, title = compare_series_html(data["series"])
     image = await _render(html, width) if with_image else None
-    lines = [f"【{title}】{period}"]
+    lines = [f"【{title}】"]
     for trace in data.get("traces") or []:
         points = trace.get("points") or []
         last = points[-1].get("pct") if points else None

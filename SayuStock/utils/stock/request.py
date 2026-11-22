@@ -29,7 +29,7 @@ async def get_hours_from_em() -> Tuple[float, float, Optional[datetime]]:
             params=params,
         )
         if isinstance(data, int):
-            logger.warning(f"[SayuStock] 获取{mk}数据失败, 错误码: {data}")
+            logger.debug(f"[SayuStock] 获取{mk}数据失败, 错误码: {data}")
             continue
         ya0, y0, ltd = calculate_difference(data["data"]["trends"])
         y += y0

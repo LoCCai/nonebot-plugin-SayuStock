@@ -27,7 +27,7 @@ import math
 import time
 import types
 import asyncio
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from pathlib import Path
 from datetime import date, datetime
 
@@ -37,6 +37,10 @@ from .theme import themed_upstream_page
 from ..compat import bootstrap
 from ..platform import UnifiedEvent
 from ..artifacts import create_html
+
+if TYPE_CHECKING:
+    from SayuStock.utils.market import KlineSeries
+    from SayuStock.stock_analysis.technical import TechnicalReport
 
 bootstrap.install()
 
@@ -180,14 +184,23 @@ def _num(value: float | None, digits: int = 2) -> str:
     return "—" if value is None else f"{value:.{digits}f}"
 
 
-async def _technical(event: UnifiedEvent, argument: str) -> Any:
-    from SayuStock.utils.market import KlinePeriod, get_market, kline_to_df, is_market_error
-    from SayuStock.stock_analysis.render import build_technical_html
-    from SayuStock.stock_analysis.technical import (
-        report_to_text,
-        build_technical_report,
-        parse_period_and_query,
+def technical_report(series: KlineSeries) -> TechnicalReport | str:
+    from SayuStock.utils.market import kline_to_df
+    from SayuStock.stock_analysis.technical import build_technical_report
+
+    return build_technical_report(
+        name=series.symbol.name,
+        code=series.symbol.code,
+        period_code=series.period.value,
+        ohlcv_df=kline_to_df(series),
+        source_ids=(series.provider,) if series.provider else (),
     )
+
+
+async def _technical(event: UnifiedEvent, argument: str) -> Any:
+    from SayuStock.utils.market import KlinePeriod, get_market, is_market_error
+    from SayuStock.stock_analysis.render import build_technical_html
+    from SayuStock.stock_analysis.technical import report_to_text, parse_period_and_query
 
     period, query = parse_period_and_query(argument)
     if not query:
@@ -195,19 +208,15 @@ async def _technical(event: UnifiedEvent, argument: str) -> Any:
     series = await get_market().kline(query, KlinePeriod(period))
     if is_market_error(series):
         return _result()(series.message, structured={"ok": False})
-    report = build_technical_report(
-        name=series.symbol.name,
-        code=series.symbol.code,
-        period_code=period,
-        ohlcv_df=kline_to_df(series),
-        source_ids=(series.provider,) if series.provider else (),
-    )
+    report = technical_report(series)
     if isinstance(report, str):
         return _result()(report, structured={"ok": False})
     text = report_to_text(report)
     structured = report.to_dict()
     structured["provider"] = series.provider
-    return await _html_result("技术分析", "股票技术分析", build_technical_html(report), text, event, structured)
+    structured["as_of"] = series.as_of
+    title = f"技术分析 · {report.name}（{report.code}）· {report.period_label}"
+    return await _html_result("技术分析", title, build_technical_html(report), text, event, structured)
 
 
 async def _stock_card(event: UnifiedEvent, argument: str) -> Any:

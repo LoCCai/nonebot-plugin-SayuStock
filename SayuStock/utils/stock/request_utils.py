@@ -95,11 +95,11 @@ def _code_query_candidates(raw: str) -> List[str]:
         _add(m.group(1))
     for m in re.finditer(r"\b(\d{6})\b", text):
         _add(m.group(1))
+    _add(text)
     for part in re.split(r"[\s,，/|+\-—]+", text):
         _add(part)
     name_only = re.sub(r"[\d.\s,，/|+\-—]+", "", text)
     _add(name_only)
-    _add(text)
     return out
 
 
@@ -217,19 +217,23 @@ async def _get_code_id_one(code: str, priority: Optional[str] = None) -> Optiona
     override = code_query_overrides.get(code.strip().lower())
     if override is not None:
         return override
-    if code.endswith(".h"):
+    suffix = code.lower()
+    if suffix.startswith("hk") and len(code) == 7 and code[2:].isascii() and code[2:].isdigit():
+        code = code[2:]
+        priority = "h"
+    elif suffix.endswith(".h"):
         code = code[: -len(".h")]
         priority = "h"
-    elif code.endswith(".hk"):
+    elif suffix.endswith(".hk"):
         code = code[: -len(".hk")]
         priority = "h"
-    elif code.endswith(".us"):
+    elif suffix.endswith(".us"):
         code = code[: -len(".us")]
         priority = "us"
-    elif code.endswith(".kr"):
+    elif suffix.endswith(".kr"):
         code = code[: -len(".kr")]
         priority = "kr"
-    elif code.endswith(".a"):
+    elif suffix.endswith(".a"):
         code = code[: -len(".a")]
         priority = "a"
 
@@ -273,6 +277,8 @@ async def _get_code_id_one(code: str, priority: Optional[str] = None) -> Optiona
     # 带 .us/.h/.kr 时不能把 6 位代码当成 A 股，否则 600519.us 会短路成茅台。
     # 名称表里没有的场内基金、次新：市场能定，名字必须再走搜索。
     local_unnamed: Optional[Tuple[str, str, str]] = None
+    if priority in (None, "h") and len(code) == 5 and code.isascii() and code.isdigit():
+        local_unnamed = (f"116.{code}", "", "港股")
     if priority is None or priority == "a":
         local = local_digit_code(code)
         if local is not None:
@@ -378,11 +384,11 @@ async def get_image_from_em(
 
     async with ClientSession(headers=eastmoney_headers({})) as sess:
         try:
-            logger.info(f"[SayuStock]开始下载: {name} | 地址: {url}")
+            logger.debug(f"[SayuStock]开始下载: {name} | 地址: {url}")
             async with sess.get(url) as res:
                 if res.status == 200:
                     content = await res.read()
-                    logger.info(f"[SayuStock]下载成功: {name}")
+                    logger.debug(f"[SayuStock]下载成功: {name}")
                 else:
                     logger.warning(f"[SayuStock]{name}下载失败")
                     return Image.new("RGBA", (256, 256))

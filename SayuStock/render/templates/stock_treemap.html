@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ page.title }}</title>
+<style>
+* {box-sizing:border-box}
+.cloud-card {width:100%;max-width:{{ page.width }}px;margin:auto;padding:clamp(12px,2vw,30px)}
+.cloud-meta,.cloud-key {display:flex;align-items:center;gap:.65em;flex-wrap:wrap}
+.cloud-meta {justify-content:space-between;margin:16px 0 10px;color:var(--ss-text-soft);font-size:clamp(13px,1.3vw,19px)}
+.cloud-key i {display:inline-block;width:.75em;height:.75em;border-radius:3px;margin-right:.35em}
+.cloud-plot {display:block;width:100%;height:auto;background:var(--ss-bg);border-radius:12px;overflow:hidden}
+.cloud-plot text {pointer-events:none}
+.cloud-sub {margin:.7em 0 0;color:var(--ss-text-soft);font-size:clamp(14px,1.4vw,21px)}
+@media(min-width:1500px) {
+  .cloud-card {padding:1.5vw}
+  .cloud-card .stock-heading {min-height:18vw;border-radius:1.5vw}
+  .cloud-card .stock-heading-copy {padding:2.4vw}
+  .cloud-card .stock-heading h1 {font-size:4.4vw}
+  .cloud-card .stock-heading-art {height:20vw;max-height:none}
+  .cloud-card .cloud-sub,.cloud-card .cloud-meta {font-size:1.3vw}
+  .cloud-card .cloud-meta {margin:1.2vw 0 .8vw}
+  .cloud-card .report-footer {padding:1.2vw 2vw;border-radius:1.2vw}
+  .cloud-card .report-footer-avatars,.cloud-card .stock-footer-meta {gap:1.5vw}
+  .cloud-card .report-footer-avatars img {width:4.8vw}
+  .cloud-card .report-footer figcaption,.cloud-card .stock-footer-meta span {font-size:1vw}
+  .cloud-card .stock-footer-meta :is(strong,time) {font-size:1.3vw}
+}
+</style></head><body><main class="cloud-card">
+<header class="stock-heading"><div class="stock-heading-copy"><h1>{{ page.title }}</h1>
+<p class="cloud-sub">{{ coverage or '市值加权' }}{% if coverage %} · 市值加权{% endif %}</p></div><!--stock-heading-art--></header>
+<div class="cloud-meta"><span>{{ source }} · 图中 {{ page.tiles|length }} 只</span>
+<span class="cloud-key">{% for tone,label in [('down','下跌'),('flat','平盘'),('up','上涨')] %}<span><i style="background:var(--ss-{{ tone }})"></i>{{ label }}</span>{% endfor %}</span></div>
+<svg class="cloud-plot" viewBox="0 0 {{ page.plot_width }} {{ page.plot_height }}" role="img" aria-label="{{ page.title }}，面积为市值，颜色为涨跌幅">
+  {% for g in page.groups if g.show_title %}
+  <text x="{{ g.x+4 }}" y="{{ g.y+g.header_h*0.76 }}" font-size="{{ g.header_font }}" font-weight="600" fill="var(--ss-text-soft)">{{ g.name }}</text>
+  {% endfor %}
+  {% for t in page.tiles %}
+  <g><title>{{ t.name }} {{ t.change }}</title><rect x="{{ t.x }}" y="{{ t.y }}" width="{{ t.w }}" height="{{ t.h }}" rx="{{ [t.w*0.06,t.h*0.07,5*page.unit]|min }}" fill="{{ t.color }}"/>
+  {% if t.show_text %}<text x="{{ t.x+t.w/2 }}" y="{{ t.y+t.h/2 }}" text-anchor="middle" dominant-baseline="central" font-size="{{ t.font_size }}" fill="{{ tile_text_color(t.color) }}">
+    <tspan x="{{ t.x+t.w/2 }}" dy="{{ '-.48em' if t.show_change else '0' }}" font-weight="650">{{ t.name }}</tspan>
+    {% if t.show_change %}<tspan x="{{ t.x+t.w/2 }}" dy="1.3em" font-size=".84em">{{ t.change }}</tspan>{% endif %}
+  </text>{% endif %}</g>{% endfor %}
+</svg><!--stock-report-footer--></main></body></html>

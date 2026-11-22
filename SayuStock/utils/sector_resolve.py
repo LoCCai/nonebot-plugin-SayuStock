@@ -174,7 +174,7 @@ def filter_snapshot_by_codes(snap: BoardSnapshot, codes: list[str], title: str) 
     rows = tuple(row for row in snap.rows if row.code in wanted)
     if not rows:
         return ErroText["notData"]
-    return BoardSnapshot(kind=snap.kind, title=title, rows=rows)
+    return replace(snap, title=title, rows=rows)
 
 
 async def _iter_sector_menus(
@@ -252,7 +252,7 @@ async def fetch_named_board(
     if isinstance(matched, str):
         return query.strip(), matched
     name, code = matched
-    snap = await port.board(code, limit=None, sort_asc=False)
+    snap = await port.board("concept", sector=code, limit=None, sort_asc=False)
     if is_market_error(snap):
         return name, snap.message
     return name, snap

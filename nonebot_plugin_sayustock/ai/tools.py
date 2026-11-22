@@ -20,6 +20,7 @@ from ..services.charts import (
     dashboard_html,
     build_kline_html,
     build_report_html,
+    kline_series_html,
     build_compare_html,
     build_intraday_html,
     compare_series_html,
@@ -67,7 +68,8 @@ def _summary_technical(data: dict[str, Any]) -> str:
     symbol = data.get("symbol") or {}
     ind = data.get("indicators") or {}
     lines = [
-        f"【技术分析】{symbol.get('name')}({symbol.get('code')}) · {data.get('period')}",
+        f"【技术分析】{symbol.get('name')}({symbol.get('code')}) · "
+        f"{(data.get('technical_report') or {}).get('period') or data.get('period')} · 行情截至 {data['as_of']}",
         f"评分 {data.get('score'):+.3f}（-1 空 ~ +1 多），收盘 {data.get('price')}",
         f"MA5/10/20/60: {ind.get('ma5')} / {ind.get('ma10')} / {ind.get('ma20')} / {ind.get('ma60')}",
         f"MACD DIF/DEA/BAR: {ind.get('macd_dif')} / {ind.get('macd_dea')} / {ind.get('macd_bar')}",
@@ -162,26 +164,30 @@ async def kline_tool(
     _tool_context: ToolContext,
 ) -> ToolOutcome:
     runtime = get_runtime()
-    data = await runtime.market.kline(query, period)
+    series, data = await runtime.market.kline_snapshot(query, period)
     symbol = data["symbol"]
     indicators = data["indicators"]
     bars = data["bars"]
     text = (
         f"【{symbol.get('name')}({symbol.get('code')}) · {period}】"
-        f"共 {len(bars)} 根，最新收盘 {bars[-1]['close'] if bars else '—'}，"
+        f"截至 {data['as_of']}，共 {len(bars)} 根，最新收盘 {bars[-1]['close']}，"
         f"MACD {indicators.get('macd_bar')}，RSI12 {indicators.get('rsi12')}，"
         f"MA20 {indicators.get('ma20')}。"
     )
     image = None
     artifacts: list[Any] = []
     if include_chart:
-        html, width, title = await build_kline_html(runtime.market, query, period)
+        html, width, title = kline_series_html(series, period)
         image, artifacts = await _chart_artifacts(title=title, html=html, width=width, ctx=_tool_context)
     return ToolOutcome(
         text=text + _artifact_note(_tool_context, artifacts),
         structured={
             "symbol": symbol,
             "period": period,
+            "as_of": data["as_of"],
+            "provider": data["provider"],
+            "adjusted": data["adjusted"],
+            "bar_count": len(bars),
             "indicators": indicators,
             "recent_bars": bars[-40:],
         },
@@ -737,7 +743,7 @@ register(
         name="sayustock_kline",
         description=(
             "获取股票/ETF/指数的 K 线数据与技术指标（MA/MACD/RSI/KDJ/BOLL/ATR/CMF），"
-            "并可按需生成 K 线图。period 取 5k/15k/30k/60k/日k/周k/月k/季k/年k。"
+            "港股可用五位代码查询日、周、月 K 线。返回末根日期和数据源，并可生成图表。"
         ),
         parameters={
             "type": "object",
@@ -758,7 +764,7 @@ register(
         name="sayustock_technical_analysis",
         description=(
             "对股票/ETF 做多周期技术面评分：趋势、动量、量能、位置、支撑压力与风险信号，"
-            "返回 -1~+1 评分及多空信号。用户问“技术面/能不能买/走势如何”时调用。"
+            "返回 -1~+1 信号评分和百分制技术报告。支持用五位港股代码查询日、周、月线。"
         ),
         parameters={
             "type": "object",

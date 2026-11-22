@@ -194,9 +194,10 @@ def _group(group: IpoCalendarGroup, data: IpoCalendarRenderData, failed: Sequenc
     )
 
 
-def build_ipo_calendar_html(data: IpoCalendarRenderData, *, failed: Sequence[str] = ()) -> str:
+def build_ipo_calendar_html(data: IpoCalendarRenderData, *, failed: Sequence[str] = (), title: str = "IPO 日历") -> str:
     return render_template(
         "ipo_calendar.html",
+        title=title,
         width=CSS_WIDTH,
         subtitle=f"{data.window_start:%Y-%m-%d} 至 {data.window_end:%Y-%m-%d} · 共 {data.total} 只",
         date_cells=tuple(

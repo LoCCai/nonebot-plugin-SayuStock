@@ -52,7 +52,7 @@
 .ipo-empty.failed { color: {{ YELLOW }}; }
 {% endblock %}
 {% block content %}
-{{ heading("新股发行 / 上市", "IPO 日历", subtitle) }}
+{{ heading("新股发行 / 上市", title, subtitle) }}
 <div class="panel ipo-legend">
   {% for phase, label in legend %}<span class="ipo-key"><i class="ipo-swatch phase-{{ phase }}"></i>{{ label }}</span>{% endfor %}
   <span class="ipo-key muted">‹ / › 窗口外日期</span>

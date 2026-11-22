@@ -409,10 +409,11 @@ async def fetch_ipo_events(markets: list[IpoMarket]) -> tuple[list[IpoEvent], li
 async def ipo_calendar(event: UnifiedEvent, argument: str) -> Any:
     markets = parse_ipo_markets(argument)
     wanted = markets or list(IpoMarket)
+    title = "IPO日历 · " + "、".join(_MARKET_LABEL[market] for market in wanted)
     events, failed, raw = await fetch_ipo_events(wanted)
     if len(failed) == len(wanted):
         return _command_result()(
-            "IPO日历数据获取失败：" + "、".join(failed) + "市场数据源暂时不可用，请稍后再试。",
+            f"【{title}】行情获取失败，请稍后重试。",
             structured={"markets": [m.value for m in wanted], "failed": failed},
         )
 
@@ -436,9 +437,10 @@ async def ipo_calendar(event: UnifiedEvent, argument: str) -> Any:
     if failed:
         text += f"\n⚠ {'、'.join(failed)}市场数据源暂时不可用，未计入"
 
-    html = themed_upstream_page(build_ipo_calendar_html(data, failed=failed), "IPO 日历")
+    text = text.replace("【IPO日历】", f"【{title}】", 1)
+    html = themed_upstream_page(build_ipo_calendar_html(data, failed=failed, title=title), title)
     artifact = create_html(
-        "IPO日历",
+        title,
         html,
         kind="chart",
         owner=event.user_id,

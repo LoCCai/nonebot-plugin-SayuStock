@@ -8,6 +8,7 @@ from .config import get_value
 from .ai.tools import TOOLS, run_tool
 from .artifacts import get_artifact
 from .ai.contracts import ToolContext
+from .services.market import MarketServiceError
 
 
 def definitions():
@@ -21,7 +22,14 @@ async def call(name, arguments, *, qq, thread, is_admin, confirmed):
     if not qq or (tool.effect == "mutating") != confirmed:
         raise ValueError("请核对绑定 QQ 和操作")
     ctx = ToolContext(platform="qweb", user_id=qq, session_id=thread, bot_id="qweb", confirmed=confirmed)
-    result = await run_tool(name, arguments, ctx)
+    try:
+        result = await run_tool(name, arguments, ctx)
+    except MarketServiceError as error:
+        if name not in ("sayustock_kline", "sayustock_technical_analysis"):
+            raise
+        query = arguments["query"]
+        period = arguments.get("period", "日k")
+        raise ValueError(f"{query} · {period} 未取得 K 线，本次查询无法计算技术指标。{error}") from error
     media = []
     for item in result.artifacts:
         if not item.mime.startswith("text/html"):

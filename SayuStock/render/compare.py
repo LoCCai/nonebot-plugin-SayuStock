@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 import pandas as pd
 
+from .kline import PERIOD_NAMES
 from ..utils import indicators as ind
 from .charts import Scale
 from .palette import UP, DOWN, TEXT, MUTED, SERIES, TEXT_SOFT
@@ -343,7 +344,7 @@ def prepare_compare(series_list: list[KlineSeries]) -> ChartPage | str:
     _place_tag_boxes(panel, candidates, COMPARE_RIGHT)
     add_end_labels(panel, entries, right=COMPARE_RIGHT)
     return ChartPage(
-        "个股对比",
+        f"个股走势对比 · {PERIOD_NAMES[series_list[0].period]} · " + "、".join(trace.name for trace in traces),
         "区间表现",
         f"{dates[0]:%Y-%m-%d} — {dates[-1]:%Y-%m-%d} · 各标的以首个收盘价为 0%",
         [panel],

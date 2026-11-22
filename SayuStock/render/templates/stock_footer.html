@@ -1,0 +1,11 @@
+<footer class="report-footer">
+  <div class="report-footer-avatars">
+    {% for name, image in [('开发者 · LoCCai', footer_developer_avatar), ('七七', footer_qiqi_avatar), ('早柚', footer_zaoyou_avatar)] %}
+    <figure><img src="{{ image }}" alt="{{ name }}"><figcaption>{{ name }}</figcaption></figure>
+    {% endfor %}
+  </div>
+  <div class="stock-footer-meta">
+    <div><span>模块</span><strong>七七 · 股票行情</strong></div>
+    <div><span>渲染时间</span><time>{{ now_time }}</time></div>
+  </div>
+</footer>

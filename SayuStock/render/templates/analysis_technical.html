@@ -3,7 +3,7 @@
 {% from "analysis_macros.html" import technical_readings, technical_evidence %}
 {% block style %}{% include "analysis_technical.css" %}{% endblock %}
 {% block content %}
-{{ heading("技术分析", stock_name, code ~ " · " ~ period) }}
+{{ heading("技术分析", stock_name ~ " · " ~ period, code) }}
 <section class="panel ex-panel">
   <div class="tech-hero">
     <div>

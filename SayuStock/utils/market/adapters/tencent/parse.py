@@ -5,6 +5,8 @@ from __future__ import annotations
 from math import isfinite
 from typing import Any, Mapping, Sequence
 from datetime import datetime
+from zoneinfo import ZoneInfo
+from dataclasses import replace
 
 from .._base import BJ_CODE_PREFIXES
 from .client import PROVIDER
@@ -55,6 +57,8 @@ def tencent_symbol_from_secid(secid: str) -> str | None:
         return None
     if prefix == "0":
         return f"bj{code}" if code.startswith(BJ_CODE_PREFIXES) else f"sz{code}"
+    if prefix == "116" and len(code) == 5 and code.isascii() and code.isdigit():
+        return f"hk{code}"
     if prefix in ("105", "106", "107", "153"):
         # 美股纳斯达克/纽交所/美交所/粉单；腾讯仅盘口可用（K线/分时无数据）
         return f"us{code}"
@@ -289,17 +293,17 @@ def parse_qt_line_hf(line: str, *, symbol: SymbolRef) -> Quote | MarketError:
 
 
 def parse_qt_line_hk(line: str, *, symbol: SymbolRef) -> Quote | MarketError:
-    """港股指数 ~ 行。2026-10-09 hkHSI。价位列与 A 股相同，量额不是手/万。"""
+    """港股盘口。股票成交量按股、成交额按报价币种计，港指只提供价位。"""
     parts = line.split("~")
-    if len(parts) < 35:
-        return parse_error("腾讯港股指数盘口字段不足", provider=PROVIDER)
+    if len(parts) < 35 or parts[2].strip() != symbol.code:
+        return parse_error("腾讯港股盘口字段或代码不匹配", provider=PROVIDER)
     price = _f(parts, 3)
     prev_close = _f(parts, 4)
     open_px = _f(parts, 5)
     if price is None or price <= 0:
         price = prev_close or open_px
     if price is None or price <= 0:
-        return empty_error("腾讯港股指数盘口无有效报价", provider=PROVIDER)
+        return empty_error("腾讯港股盘口无有效报价", provider=PROVIDER)
     as_of = None
     raw_ts = parts[30].strip() if len(parts) > 30 else ""
     if raw_ts:
@@ -307,7 +311,7 @@ def parse_qt_line_hk(line: str, *, symbol: SymbolRef) -> Quote | MarketError:
             as_of = datetime.strptime(raw_ts, "%Y/%m/%d %H:%M:%S")
         except ValueError:
             as_of = None
-    return _quote_plain(
+    quote = _quote_plain(
         symbol,
         name=parts[1].strip() or symbol.name,
         price=price,
@@ -318,6 +322,21 @@ def parse_qt_line_hk(line: str, *, symbol: SymbolRef) -> Quote | MarketError:
         change_pct=_f(parts, 32),
         change_amount=_f(parts, 31),
         as_of=as_of,
+    )
+    if not symbol.provider_symbol.startswith("116."):
+        return quote
+    float_cap = _f(parts, 44)
+    total_cap = _f(parts, 45)
+    return replace(
+        quote,
+        volume=_f(parts, 36),
+        amount=_f(parts, 37),
+        turnover_rate=_f(parts, 59),
+        pe=_f(parts, 39),
+        pb=_f(parts, 43),
+        float_market_cap=float_cap * 1e8 if float_cap is not None else None,
+        market_cap=total_cap * 1e8 if total_cap is not None else None,
+        as_of=as_of.replace(tzinfo=ZoneInfo("Asia/Hong_Kong")) if as_of is not None else None,
     )
 
 
@@ -372,8 +391,8 @@ def _parse_bar_ts(raw: str) -> datetime | None:
     return None
 
 
-def _bars_from_rows(rows: Sequence[Any]) -> list[Bar]:
-    """腾讯 K 行 [时间,开,收,高,低,量(手),...] → Bar。注意列序为开、收、高、低。"""
+def _bars_from_rows(rows: Sequence[Any], *, volume_multiplier: int) -> list[Bar]:
+    """腾讯 K 行 [时间, 开, 收, 高, 低, 量, ...]，统一输出股数。"""
     bars: list[Bar] = []
     for row in rows:
         if not isinstance(row, (list, tuple)) or len(row) < 6:
@@ -386,7 +405,7 @@ def _bars_from_rows(rows: Sequence[Any]) -> list[Bar]:
             close = float(row[2])
             high = float(row[3])
             low = float(row[4])
-            volume_hand = float(row[5])
+            volume = float(row[5])
         except (TypeError, ValueError):
             continue
         bars.append(
@@ -396,7 +415,7 @@ def _bars_from_rows(rows: Sequence[Any]) -> list[Bar]:
                 high=high,
                 low=low,
                 close=close,
-                volume=volume_hand * 100.0,
+                volume=volume * volume_multiplier,
                 amount=None,
                 amplitude=None,
                 change_pct=None,
@@ -407,7 +426,7 @@ def _bars_from_rows(rows: Sequence[Any]) -> list[Bar]:
     return bars
 
 
-def _payload_rows(payload: object, symbol_key: str, unit: str) -> list[Any] | MarketError:
+def _payload_rows(payload: object, symbol_key: str, unit: str) -> tuple[list[Any], bool, str] | MarketError:
     """取 data.<sym>.qfq<unit>（个股，前复权）或 data.<sym>.<unit>（指数）。"""
     if not isinstance(payload, Mapping):
         return parse_error("腾讯K线 payload 非对象", provider=PROVIDER)
@@ -417,10 +436,13 @@ def _payload_rows(payload: object, symbol_key: str, unit: str) -> list[Any] | Ma
     node = data[symbol_key]
     if not isinstance(node, Mapping):
         return parse_error("腾讯K线节点非对象", provider=PROVIDER)
+    quotes = node.get("qt")
+    fields = quotes.get(symbol_key) if isinstance(quotes, Mapping) else None
+    name = fields[1] if isinstance(fields, list) and len(fields) > 1 and isinstance(fields[1], str) else ""
     for key in (f"qfq{unit}", unit):
         rows = node.get(key)
         if isinstance(rows, list) and rows:
-            return rows
+            return rows, key != unit, name
     return empty_error(f"腾讯K线缺少 {unit} 行", provider=PROVIDER)
 
 
@@ -433,13 +455,17 @@ def parse_kline_payload(
     unit: str,
     adjusted: bool,
 ) -> KlineSeries | MarketError:
-    rows = _payload_rows(payload, tencent_symbol, unit)
-    if isinstance(rows, MarketError):
-        return rows
-    bars = _bars_from_rows(rows)
+    result = _payload_rows(payload, tencent_symbol, unit)
+    if isinstance(result, MarketError):
+        return result
+    rows, has_qfq, name = result
+    hk = symbol.provider_symbol.startswith("116.")
+    bars = _bars_from_rows(rows, volume_multiplier=1 if hk else 100)
     if not bars:
         return empty_error("腾讯K线解析后为空", provider=PROVIDER)
-    return KlineSeries(symbol=symbol, period=period, bars=tuple(bars), adjusted=adjusted)
+    if name and (not symbol.name or symbol.name == symbol.code):
+        symbol = replace(symbol, name=name)
+    return KlineSeries(symbol=symbol, period=period, bars=tuple(bars), adjusted=has_qfq if hk else adjusted)
 
 
 def _quote_from_intraday(

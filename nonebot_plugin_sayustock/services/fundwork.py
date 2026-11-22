@@ -22,12 +22,15 @@ from ..feature_data import FUNDWORK as FEATURES
 bootstrap.install()
 
 from SayuStock.utils import render_text  # noqa: E402
-from SayuStock.render.treemap import treemap_html, prepare_treemap  # noqa: E402
+from SayuStock.render.treemap import prepare_treemap  # noqa: E402
 from SayuStock.utils.warn_box import failure_lines  # noqa: E402
+from SayuStock.render.templates import render_template  # noqa: E402
 from SayuStock.utils.time_range import parse_time_range  # noqa: E402
 from SayuStock.render.chart_page import WIDTH as CHART_WIDTH  # noqa: E402
+from SayuStock.utils.render_data import cloudmap_title  # noqa: E402
 from SayuStock.stock_cloudmap.data import CLOUDMAP_DATA_SERVICE  # noqa: E402
 from SayuStock.utils.market.models import BoardSnapshot  # noqa: E402
+from SayuStock.utils.market.display import source_label  # noqa: E402
 from SayuStock.stock_info.draw_future import (  # noqa: E402
     CSS_WIDTH as WEATHER_WIDTH,
     AllWeatherView,
@@ -77,6 +80,7 @@ from ..services.theme import (  # noqa: E402
     ThemePalette,
     resolve_theme,
     theme_palette,
+    tile_text_color,
     themed_upstream_page,
 )
 from ..services.charts import ChartRenderError, rasterize  # noqa: E402
@@ -442,6 +446,8 @@ def _cloud_structured(snap: BoardSnapshot, market: str, sector: str | None) -> d
     return {
         "market": market,
         "sector": sector,
+        "title": cloudmap_title(market, sector),
+        "coverage": snap.coverage,
         "provider": snap.provider,
         "total": len(rows),
         "up": sum(1 for value in changes if value > 0),
@@ -460,19 +466,18 @@ def _treemap_document(snap: BoardSnapshot, market: str, sector: str | None, pale
         snap,
         market,
         sector,
-        2 if market == "大盘云图" else 1,
+        2 if market == "大盘云图" and sector not in ("港股", "美股") else 1,
         width=width,
         up=palette.up,
         down=palette.down,
-        neutral=palette.flat,
+        neutral=palette.surface_alt,
+        landscape=True,
     )
     if isinstance(page, str):
         return page, width
-    document = treemap_html(page)
-    document = (
-        document.replace("#000000", palette.background)
-        .replace("#111315", palette.surface)
-        .replace("#9ca3af", palette.muted)
+    document = render_template(
+        "stock_treemap.html", page=page, coverage=snap.coverage, source=source_label(snap.provider),
+        tile_text_color=tile_text_color,
     )
     return document, page.width
 
@@ -484,22 +489,25 @@ async def _cloudmap(command: str, argument: str, event: Any) -> Any:
     sector = argument.strip() or None
     result = await CLOUDMAP_DATA_SERVICE.fetch(market, sector, None, None)
     raw = result.raw_data
+    resolved = result.sector or sector
+    title = cloudmap_title(market, resolved)
     if isinstance(raw, str):
-        return CommandResult(raw, structured={"error": raw, "market": market, "sector": result.sector})
+        message = "行情源暂时不可用，请稍后重试。" if "-400016" in raw else raw
+        return CommandResult(f"【{title}】{message}", structured={"error": raw, "market": market, "sector": resolved})
     if not isinstance(raw, BoardSnapshot):
         return CommandResult(
-            "云图数据不可用，请稍后再试。",
+            f"【{title}】云图数据不可用，请稍后再试。",
             structured={"error": "empty", "market": market, "sector": result.sector},
         )
-    resolved = result.sector or sector
     palette = theme_palette(resolve_theme())
     document, width = _treemap_document(raw, market, resolved, palette)
     if not document.strip().startswith("<"):
-        return CommandResult(document, structured={"error": document, "market": market, "sector": resolved})
+        return CommandResult(
+            f"【{title}】{document}", structured={"error": document, "market": market, "sector": resolved}
+        )
     text = render_text.cloudmap_text(raw, market, resolved)
     if not text:
         text = f"【{market}{' - ' + resolved if resolved else ''}】暂无可展示的行情。"
-    title = f"{market}{' · ' + resolved if resolved and market != '大盘云图' else ''}"
     return await _finish(
         command=command,
         title=title,
@@ -537,7 +545,8 @@ async def _value_compare(command: str, argument: str, event: Any) -> Any:
     view = await load_value_comparison(cleaned, kind, start, end)
     if isinstance(view, str):
         return CommandResult(view, structured={"error": view})
-    title = f"{VALUE_NAME_MAP[kind]}历史走势对比"
+    names = "、".join(item.symbol.display_name or item.symbol.code for item in view.series)
+    title = f"{VALUE_NAME_MAP[kind]}历史走势对比 · {names}"
     document = value_comparison_html(view)
     if not document.lstrip().startswith("<"):
         return CommandResult(document, structured={"error": document})

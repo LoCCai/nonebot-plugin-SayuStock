@@ -225,20 +225,29 @@ class MarketService:
         }
 
     async def kline(self, query: str, period: str | KlinePeriod = KlinePeriod.D1) -> dict[str, Any]:
+        _, data = await self.kline_snapshot(query, period)
+        return data
+
+    async def kline_snapshot(
+        self, query: str, period: str | KlinePeriod
+    ) -> tuple[KlineSeries, dict[str, Any]]:
         resolved = period if isinstance(period, KlinePeriod) else normalize_period(period)
 
-        async def load() -> dict[str, Any]:
+        async def load() -> tuple[KlineSeries, dict[str, Any]]:
             result = await self.market.kline(query, resolved)
             if is_market_error(result):
                 raise MarketServiceError(result.message)
             assert isinstance(result, KlineSeries)
+            if not result.bars:
+                raise MarketServiceError(f"{query} 的所选周期暂无 K 线数据")
             frame = self._kline_frame(result)
             from SayuStock.utils.indicators import compute_indicators
 
             indicators = compute_indicators(frame)
-            return {
+            return result, {
                 "symbol": _jsonable(result.symbol),
                 "period": result.period.value,
+                "as_of": result.as_of,
                 "adjusted": result.adjusted,
                 "provider": result.provider,
                 "bars": [
@@ -279,27 +288,20 @@ class MarketService:
         )
 
     async def technical(self, query: str, period: str = "日k") -> dict[str, Any]:
-        data = await self.kline(query, period)
+        from .studywork import technical_report
+
+        series, data = await self.kline_snapshot(query, period)
         indicators = data["indicators"]
         score, signals, risks = self._score(indicators)
-        # Compute the original 100-point report from the already fetched bars.
-        import pandas as pd
-
-        from SayuStock.stock_analysis.technical import build_technical_report
-
-        from . import studywork  # noqa: F401 - install the upstream domain before importing its submodules
-
-        report = build_technical_report(
-            name=data["symbol"]["name"], code=data["symbol"]["code"], period_code=data["period"],
-            ohlcv_df=pd.DataFrame(data["bars"]).rename(columns={"ts": "date"}),
-            source_ids=(data["provider"],) if data["provider"] else (),
-        )
+        report = technical_report(series)
         return {
             "technical_report": None if isinstance(report, str) else report.to_dict(),
             "ok": True,
             "symbol": data["symbol"],
             "period": data["period"],
-            "as_of": datetime.now().isoformat(timespec="seconds"),
+            "as_of": data["as_of"],
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "adjusted": data["adjusted"],
             "price": data["bars"][-1]["close"] if data["bars"] else None,
             "indicators": indicators,
             "score": score,

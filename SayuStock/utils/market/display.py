@@ -25,6 +25,7 @@ PROVIDER_DISPLAY: dict[str, str] = {
     "eastmoney": "东方财富",
     "tencent": "腾讯财经",
     "sina": "新浪财经",
+    "sina+tencent": "新浪财经、腾讯财经",
     "ths": "同花顺",
     "tiantian": "天天基金",
     "okx": "OKX",

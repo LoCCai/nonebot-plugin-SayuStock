@@ -8,6 +8,7 @@ from dataclasses import dataclass
 
 from ..utils.market import get_market, is_market_error
 from ..utils.constant import bk_dict, market_dict
+from ..utils.market.enums import BoardKind
 from ..utils.market.models import KlineSeries, BoardSnapshot, IntradaySeries
 from ..utils.sector_resolve import fetch_named_board
 
@@ -42,7 +43,9 @@ class CloudMapDataService:
         port = get_market()
 
         if market == "大盘云图":
-            if resolved_sector:
+            if resolved_sector in ("美股", "港股"):
+                snap = await port.board(BoardKind.HOTMAP, sector=resolved_sector, limit=None)
+            elif resolved_sector and resolved_sector != "A股":
                 snap = await port.board(resolved_sector, limit=None, sort_asc=False)
             else:
                 snap = await port.hotmap()
@@ -65,6 +68,9 @@ class CloudMapDataService:
         return CloudMapDataResult(raw_data, raw_datas, resolved_sector, special_cache_key)
 
     def resolve_sector(self, market: str, sector: Optional[str]) -> Optional[str]:
+        if market == "大盘云图" and sector:
+            aliases = {"a股": "A股", "cn": "A股", "us": "美股", "hk": "港股"}
+            sector = aliases.get(sector.strip().casefold(), sector.strip())
         if sector != "single-stock":
             if market in market_dict and "b:" in market_dict[market]:
                 return market

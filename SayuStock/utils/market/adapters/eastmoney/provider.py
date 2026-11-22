@@ -319,6 +319,21 @@ class EastMoneyMarketData:
         sort_asc: bool = False,
     ) -> BoardSnapshot | MarketError:
         market = _market_key(kind, sector)
+        if kind == BoardKind.CONCEPT and _is_bk_market(market) and limit is None:
+            codes = await EASTMONEY_REQUESTER.concept_member_codes(market.upper())
+            if isinstance(codes, list):
+                hot = await self.hotmap()
+                if not is_market_error(hot):
+                    members = set(codes)
+                    rows = tuple(row for row in hot.rows if row.code in members)
+                    if rows:
+                        return replace(
+                            hot,
+                            kind=BoardKind.CONCEPT,
+                            title=market,
+                            rows=rows,
+                            coverage=f"概念成分 {len(codes)} 只 · 有行情 {len(rows)} 只",
+                        )
         # 东财 clist po: 1=降序(高值在前/涨幅榜), 0=升序(低值在前/跌幅榜)
         po = 0 if sort_asc else 1
         pz = limit if limit is not None else 100
@@ -331,6 +346,10 @@ class EastMoneyMarketData:
         snap = parse_board_payload(raw, kind=bk, title=market)
         if isinstance(snap, MarketError):
             return snap
+        if kind == BoardKind.HOTMAP and not any(
+            row.market_cap and row.market_cap > 0 and row.change_pct is not None for row in snap.rows
+        ):
+            return empty_error(f"{market}缺少云图所需的市值与涨跌幅", provider=PROVIDER)
         if limit is not None and len(snap.rows) > limit:
             return BoardSnapshot(kind=snap.kind, title=snap.title, rows=snap.rows[:limit])
         return snap

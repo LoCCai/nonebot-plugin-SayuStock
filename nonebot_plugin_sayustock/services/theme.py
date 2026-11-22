@@ -174,6 +174,11 @@ def _luminance(color: str) -> float:
     return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
 
 
+def tile_text_color(background: str) -> str:
+    # At this luminance black and white have equal WCAG contrast.
+    return "#000000" if _luminance(background) > 0.179 else "#ffffff"
+
+
 def _is_dark_mode(mode: str, background: str) -> bool:
     normalized = (mode or "").strip().lower()
     if normalized in {"light", "day", "日", "日间", "白天", "明亮"}:
@@ -456,49 +461,63 @@ html[data-card-theme] .wrap, html[data-card-theme] .chart-page {
 }
 html[data-card-theme] .wrap { width:min(100%,var(--stock-width,920px)); }
 .stock-heading {
-  display:flex;align-items:stretch;justify-content:space-between;gap:0;margin:0 0 18px;
-  padding:0;background:var(--surface-accent,var(--ss-surface-alt));color:var(--ss-text);
-  border:1px solid var(--ss-border);border-radius:var(--menu-radius,14px);overflow:hidden;
+  position:relative;isolation:isolate;display:flex;align-items:stretch;justify-content:space-between;
+  gap:0;min-height:clamp(155px,19vw,270px);margin:0 0 18px;padding:0;text-align:left;
+  background:var(--ss-accent-soft);color:var(--ss-text);border:0;border-radius:22px;overflow:hidden;
 }
 html[data-card-theme] body:has(.stock-upstream-content) { max-width:100%;margin-inline:auto; }
 .stock-upstream-content { max-width:100%;min-width:0;overflow-x:auto; }
 .stock-upstream-content .page { box-sizing:border-box;max-width:100%;margin-inline:auto; }
+.stock-upstream-content .page:has(> .ex-panel) { width:100%;background:transparent; }
 .stock-upstream-content .ex-table, .stock-upstream-content .matrix { overflow-x:auto; }
 @media(max-width:640px) {
   .stock-upstream-content .page { padding:12px; }
   .stock-upstream-content .ex-grid:is(.three,.four,.five,.six) { grid-template-columns:repeat(2,minmax(0,1fr)); }
   .stock-upstream-content .ex-head { flex-wrap:wrap; }
 }
-.stock-heading-copy { flex:1;min-width:0;align-self:center;padding:16px clamp(12px,3vw,30px);overflow-wrap:anywhere; }
-.stock-heading h1 { margin:0;font-size:clamp(22px,3.3vw,38px);line-height:1.25; }
+.stock-heading-copy { flex:1;min-width:0;align-self:center;padding:22px clamp(16px,3vw,42px);overflow-wrap:anywhere; }
+.stock-heading h1 {
+  margin:0;font-size:clamp(28px,4.5vw,66px);font-weight:720;line-height:1.14;letter-spacing:-.025em;color:var(--ss-text);
+}
 .stock-heading-copy :is(.sub,.dash-sub,.news-source,.meta,.chart-subtitle,.news-count) {
   color:var(--ss-muted);margin:5px 0 0;
 }
 .stock-heading-copy .chart-kicker { margin:0 0 4px; }
 .stock-heading-art {
-  display:block;align-self:stretch;width:clamp(110px,32%,370px);height:auto;min-height:96px;
-  max-height:166px;object-fit:cover;object-position:center;mask-image:linear-gradient(90deg,transparent,#000 15%);
+  display:block;align-self:stretch;width:48%;min-width:0;height:auto;max-height:clamp(210px,24vw,340px);
+  object-fit:cover;object-position:55% 40%;mask-image:linear-gradient(90deg,transparent,#000 18%);
 }
 html[data-card-theme] :is(.news-item,.panel,.dash-panel,.dash-card,.chart-card) {
   border-radius:var(--menu-radius,12px);
 }
-.report-footer {
-  --card-bg:var(--ss-surface);--text-muted:var(--ss-muted);--primary-color:var(--ss-accent);
-  --shadow-color:var(--card-shadow-color,transparent);--border-color:var(--ss-border);
-  font-variant-numeric:tabular-nums;
-}
+.report-footer {display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:16px;
+  margin:20px 0 0;padding:16px clamp(16px,2.5vw,32px);border:0;border-radius:18px;
+  background:var(--ss-accent-soft);color:var(--ss-text);font-variant-numeric:tabular-nums;}
+.report-footer-avatars,.stock-footer-meta {display:flex;align-items:center;gap:clamp(12px,2vw,28px);}
+.report-footer-avatars figure {display:grid;justify-items:center;gap:5px;margin:0;}
+.report-footer-avatars img {display:block;width:clamp(46px,5vw,68px);height:auto;aspect-ratio:1;
+  object-fit:cover;border:0;border-radius:24%;box-shadow:none;}
+.report-footer-avatars figcaption,.stock-footer-meta span {font-size:12px;color:var(--ss-text-soft);}
+.stock-footer-meta {flex-wrap:wrap;}
+.stock-footer-meta div {display:grid;gap:5px;}
+.stock-footer-meta :is(strong,time) {font-size:clamp(13px,1.35vw,18px);line-height:1.25;}
+html[data-card-theme] :is(.index-card,.panel,.dash-panel,.dash-card,.chart-card,.chart-panel,.news-item) {
+  border:0;background-color:var(--ss-surface-alt);}
+html[data-card-theme] :is(.panel,.dash-panel,.chart-panel) {border-radius:16px;}
+html[data-card-theme] :is(.ex-tr,.wrap td,.wrap th,.extra-foot) {border-color:var(--ss-grid-soft);}
 .stock-panels { min-width:0;overflow-x:auto; }
 .chart-page .stock-heading { flex-shrink:0; }
 html[data-card-theme] .note {color:var(--ss-text);background:var(--surface-accent,var(--ss-surface-alt));}
 @media(max-width:680px) {
   html[data-card-theme] :is(.wrap,.chart-page) { padding:12px; }
-  .stock-heading-art { min-height:84px;max-height:132px; }
-  .stock-heading-copy { padding:10px 12px; }
+  .stock-heading {min-height:136px;border-radius:16px;}
+  .stock-heading-art {width:40%;max-height:205px;}
+  .stock-heading-copy {padding:16px;}
   .wrap table { overflow-wrap:anywhere; }
   .wrap :is(.tables,.stats,.grid,.dash-grid) {grid-template-columns:repeat(auto-fit,minmax(min(148px,100%),1fr));}
   .dash-panel,.panel { max-width:100%;overflow-x:auto; }
-  .report-footer .report-footer-avatars {gap:8px;}
-  .report-footer .report-footer-avatars img {width:48px;height:48px;}
+  .report-footer {padding:14px;gap:14px;}
+  .stock-footer-meta {gap:16px;}
 }
 
 .up, .is-up { color: var(--ss-up) !important; }
@@ -688,9 +707,8 @@ def themed_upstream_page(document: str, title: str) -> str:
 
     from .card_frame import ART_SLOT, FOOTER_SLOT
 
-    if 'class="stock-heading"' in document and ART_SLOT not in document:
-        # A page already themed by the chart builder carries its own footer.
-        return document
+    if 'class="stock-heading"' in document:
+        return apply_theme(document) if ART_SLOT in document else document
     source = re.search(r"(<body\b[^>]*>)(.*?)(</body>)", document, re.I | re.S)
     if not source:
         return document

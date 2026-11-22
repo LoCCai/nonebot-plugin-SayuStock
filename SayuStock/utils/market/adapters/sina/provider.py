@@ -297,6 +297,10 @@ class SinaMarketData(PartialMarketData):
         sort_asc: bool = False,
     ) -> BoardSnapshot | MarketError:
         key = sector or (kind.value if isinstance(kind, BoardKind) else str(kind))
+        if kind == BoardKind.HOTMAP and key in ("美股", "港股"):
+            from .overseas_map import overseas_map
+
+            return await overseas_map(key)
         # 行业板块汇总表自带全行业（新浪行业口径，云图/选股沿用）
         if key in ("行业板块", "行业", "industry"):
             payload = await fetch_industry_summary()

@@ -305,7 +305,8 @@ class ConfigurableEquityMarket:
     def __init__(self, config_reader: Callable[[str, object], object] | None = None) -> None:
         self._reader = config_reader or default_config_reader
         self._instances: dict[str, MarketDataPort] = {}
-        self._kline_health: dict[str, _SourceHealth] = {}
+        self._health: dict[tuple[str, str], _SourceHealth] = {}
+        self._warning_at: dict[tuple[str, str, str], float] = {}
 
     # -- 装配 -----------------------------------------------------------
 
@@ -341,9 +342,10 @@ class ConfigurableEquityMarket:
         except Exception as exc:  # noqa: BLE001 - provider exceptions must allow fallback
             return network_error(f"{type(exc).__name__}: {exc}", provider=pid)
 
-    async def _read_kline_source(
+    async def _read_probed_source(
         self,
         port: MarketDataPort,
+        method: str,
         pid: str,
         args: tuple[object, ...],
         kwargs: dict[str, object],
@@ -351,19 +353,20 @@ class ConfigurableEquityMarket:
         *,
         last_chance: bool,
     ) -> tuple[object, bool]:
-        health = self._kline_health.setdefault(pid, _SourceHealth())
+        key = (method, pid)
+        health = self._health.setdefault(key, _SourceHealth())
         deadline = time.monotonic() + budget
         while health.probe is not None:
             try:
                 await asyncio.wait_for(health.probe.wait(), timeout=max(0.0, deadline - time.monotonic()))
             except asyncio.TimeoutError:
                 return network_error("等待行情源探测超时", provider=pid), True
-            health = self._kline_health[pid]
+            health = self._health[key]
             if health.error and last_chance:
                 return health.error, True
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            return network_error("K 线时间预算已耗尽", provider=pid), True
+            return network_error("行情时间预算已耗尽", provider=pid), True
         if health.error and time.monotonic() < health.retry_at and not last_chance:
             return health.error, True
 
@@ -371,22 +374,22 @@ class ConfigurableEquityMarket:
         if probe is not None:
             health.probe = probe
         try:
-            result = await self._read_source(port, "kline", pid, args, kwargs, remaining)
+            result = await self._read_source(port, method, pid, args, kwargs, remaining)
             # A late result from an earlier healthy batch cannot overwrite a newer probe.
-            if self._kline_health[pid] is health:
+            if self._health[key] is health:
                 if is_market_error(result) and result.code == "network":
                     failures = health.failures + 1
                     delay = min(SOURCE_COOLDOWN_MAX_S, SOURCE_COOLDOWN_S * 2 ** min(failures - 1, 5))
-                    self._kline_health[pid] = _SourceHealth(
+                    self._health[key] = _SourceHealth(
                         failures=failures, retry_at=time.monotonic() + delay, error=result
                     )
                     logger.warning(
-                        f"[SayuStock][行情API] kline {PROVIDER_LABELS.get(pid, pid)} "
+                        f"[SayuStock][行情API] {method} {PROVIDER_LABELS.get(pid, pid)} "
                         f"连接失败（{result.message}），冷却 {delay:.0f}s，按配置顺延"
                     )
                 elif not health.ready:
                     if health.error:
-                        logger.info(f"[SayuStock][行情API] kline {PROVIDER_LABELS.get(pid, pid)} 已恢复响应")
+                        logger.info(f"[SayuStock][行情API] {method} {PROVIDER_LABELS.get(pid, pid)} 已恢复响应")
                     health.ready = True
                     health.error = None
                     health.failures = 0
@@ -413,9 +416,9 @@ class ConfigurableEquityMarket:
             if budget <= 0:
                 logger.warning(f"[SayuStock][行情API] {iface} 取数预算已耗尽，停止顺延")
                 break
-            if iface == "kline":
-                result, skipped = await self._read_kline_source(
-                    port, pid, args, kwargs, budget, last_chance=last_chance
+            if iface in ("kline", "intraday"):
+                result, skipped = await self._read_probed_source(
+                    port, method, pid, args, kwargs, budget, last_chance=last_chance
                 )
                 if skipped and is_market_error(result):
                     real_errors[i] = result
@@ -437,8 +440,13 @@ class ConfigurableEquityMarket:
                 logger.debug(f"[SayuStock][行情API] {iface} 在 {PROVIDER_LABELS.get(pid, pid)} 不支持，跳过")
                 continue
             real_errors[i] = result
-            if iface == "kline" and result.code == "network":
+            if iface in ("kline", "intraday") and result.code == "network":
                 continue
+            key = (iface, pid, result.code)
+            now = time.monotonic()
+            if now - self._warning_at.get(key, -float("inf")) < 60:
+                continue
+            self._warning_at[key] = now
             nxt = chain[i + 1] if i + 1 < len(chain) else None
             logger.warning(
                 f"[SayuStock][行情API] {iface} 由 {PROVIDER_LABELS.get(pid, pid)} 失败"

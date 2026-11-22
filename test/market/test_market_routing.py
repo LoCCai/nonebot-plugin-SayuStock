@@ -703,7 +703,7 @@ def test_concurrent_kline_probes_and_recovery(monkeypatch: pytest.MonkeyPatch) -
         assert isinstance(await market.kline(symbols[0], KlinePeriod.D1_YEAR), KlineSeries) and calls == 1
 
         # A cancelled recovery probe releases waiters and allows a later probe.
-        market._kline_health["eastmoney"].retry_at = 0
+        market._health["kline", "eastmoney"].retry_at = 0
         entered.clear()
         release.clear()
         recovery = asyncio.create_task(market.kline(symbols[0], KlinePeriod.D1_YEAR))
@@ -711,7 +711,7 @@ def test_concurrent_kline_probes_and_recovery(monkeypatch: pytest.MonkeyPatch) -
         recovery.cancel()
         with pytest.raises(asyncio.CancelledError):
             await recovery
-        assert market._kline_health["eastmoney"].probe is None
+        assert market._health["kline", "eastmoney"].probe is None
         primary.fail_ifaces.clear()
         release.set()
         restored = await market.kline(symbols[0], KlinePeriod.D1_YEAR)
@@ -723,5 +723,22 @@ def test_concurrent_kline_probes_and_recovery(monkeypatch: pytest.MonkeyPatch) -
         primary.fail_ifaces.clear()
         restored = await market.kline(symbols[1], KlinePeriod.D1_YEAR)
         assert isinstance(restored, KlineSeries) and restored.provider == "eastmoney"
+
+        primary.fail_ifaces["intraday"] = "network"
+        primary.calls.clear()
+
+        async def broken_minutes(query: str, *, ndays: int) -> MarketError:
+            await asyncio.sleep(0)
+            return primary._err_or_none("intraday") or network_error("offline", provider="eastmoney")
+
+        async def available_minutes(query: str, *, ndays: int) -> IntradaySeries:
+            return IntradaySeries(_make_sym(query), (), None, ndays=ndays)
+
+        monkeypatch.setattr(primary, "intraday", broken_minutes)
+        monkeypatch.setattr(stubs["tencent"], "intraday", available_minutes)
+        minutes = await asyncio.gather(*(market.intraday(symbol) for symbol in symbols * 4))
+        assert primary.calls.count("intraday") == 1
+        assert all(isinstance(item, IntradaySeries) and item.provider == "tencent" for item in minutes)
+        assert isinstance(await market.quote(symbols[0]), Quote)
 
     asyncio.run(run())

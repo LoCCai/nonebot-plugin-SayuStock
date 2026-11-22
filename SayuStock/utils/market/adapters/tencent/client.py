@@ -21,6 +21,7 @@ _HEADERS = {
 }
 QUOTE_URL = "https://qt.gtimg.cn/q="
 FQKLINE_URL = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
+HK_FQKLINE_URL = "https://web.ifzq.gtimg.cn/appstock/app/hkfqkline/get"
 MKLINE_URL = "https://ifzq.gtimg.cn/appstock/app/kline/mkline"
 MINUTE_URL = "https://web.ifzq.gtimg.cn/appstock/app/minute/query"
 # hf_XAU 这类外盘符号带下划线；只认字母数字会把整行丢掉。
@@ -76,7 +77,7 @@ async def fetch_qt_lines(symbols: list[str]) -> dict[str, str] | MarketError:
 async def fetch_fqkline(symbol: str, unit: str, datalen: int) -> object | str:
     """日/周/月 K（前复权）；unit ∈ day|week|month。"""
     params = {"param": f"{symbol},{unit},,,{datalen},qfq"}
-    payload = await _get_json(FQKLINE_URL, params)
+    payload = await _get_json(HK_FQKLINE_URL if symbol.startswith("hk") else FQKLINE_URL, params)
     if isinstance(payload, MarketError):
         return payload.message
     return payload

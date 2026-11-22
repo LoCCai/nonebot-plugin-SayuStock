@@ -109,6 +109,7 @@ def prepare_treemap(
     up: str = _CLOUD_UP,
     down: str = _CLOUD_DOWN,
     neutral: str = _CLOUD_NEUTRAL,
+    landscape: bool = False,
 ) -> TreemapPage | str:
     data = build_cloudmap_render_data(snap, market, sector, layer)
     if isinstance(data, str):
@@ -126,12 +127,14 @@ def prepare_treemap(
     outer_pad = round(4 * unit)
     plot_width = width - 2 * outer_pad
     plot_height = width - (2 * outer_pad if full_bleed else round(74 * unit))
+    if landscape:
+        plot_height = round(plot_width * (0.82 if len(data.leaves) > 200 else 0.65))
 
     all_groups = squarify([weight(leaves) for _, leaves in by_category], 0, 0, plot_width, plot_height)
     groups: list[Group] = []
     tiles: list[Tile] = []
     names = Counter(leaf.name for leaf in data.leaves)
-    group_gap = 1.6 * unit
+    group_gap = (4 if landscape else 1.6) * unit
     tile_pad = 1.6 * unit
     tile_gap = 0.9 * unit
     min_header_font = max(7.0 * unit, 9.0)
@@ -142,7 +145,7 @@ def prepare_treemap(
         if bw < 4 or bh < 4:
             continue
         show_title = bw >= 56 * unit and bh >= 48 * unit
-        header_h = min(15.5 * unit, max(10.0 * unit, bh * 0.055)) if show_title else 0.0
+        header_h = min((24 if landscape else 15.5) * unit, max(10.0 * unit, bh * 0.085)) if show_title else 0.0
         header_font = min(
             11.5 * unit, max(min_header_font, min(header_h * 0.70, (bw * 0.90) / max(_label_units(category), 2.0)))
         )
@@ -163,9 +166,11 @@ def prepare_treemap(
             name = f"{leaf.name} · {leaf.code}" if names[leaf.name] > 1 and leaf.code else leaf.name
             change = percent_text(leaf.diff_val)
             fit, show_text, show_change = _fit_tile_font(tw, th, name, change, unit)
-            tiles.append(
-                Tile(lx, ly, tw, th, name, change, _heat(leaf.diff_val, up, down, neutral), fit, show_text, show_change)
-            )
+            color = _heat(leaf.diff_val, up, down, neutral)
+            if landscape and leaf.diff_val:
+                strength = 0.23 + 0.77 * min(abs(leaf.diff_val) / 10, 1) ** 0.5
+                color = mix(up if leaf.diff_val > 0 else down, neutral, strength)
+            tiles.append(Tile(lx, ly, tw, th, name, change, color, fit, show_text, show_change))
 
     layers = "完整成分" if data.layer == 1 else "行业代表成分"
     subtitle = f"{len(data.leaves)} 只标的 · {len(grouped)} 个行业 · {layers}"

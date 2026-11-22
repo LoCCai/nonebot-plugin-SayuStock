@@ -986,6 +986,11 @@ def build_compare_render_data(series_list: List[KlineSeries]) -> CompareRenderDa
     return CompareRenderData(items=items)
 
 
+def cloudmap_title(market: str, sector: str | None) -> str:
+    scope = sector or ("A股" if market == "大盘云图" else "")
+    return " · ".join(part for part in (market or "板块云图", scope) if part)
+
+
 def build_cloudmap_render_data(
     snap: BoardSnapshot, market: str, sector: str | None = None, layer: int = 2
 ) -> CloudmapRenderData | DataResult:
@@ -1032,9 +1037,7 @@ def build_cloudmap_render_data(
     if not selected:
         return ErroText["notData"]
 
-    title = market or "板块云图"
-    if sector and market != "大盘云图":
-        title = f"{market} - {sector}"
+    title = cloudmap_title(market, sector)
     return CloudmapRenderData(sorted(selected, key=lambda leaf: leaf.value, reverse=True), title, layer)
 
 
