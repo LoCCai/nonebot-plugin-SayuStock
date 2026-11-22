@@ -25,11 +25,11 @@ from .commands import (
     execute,
     add_watch,
     clear_watch,
-    help_result,
     news_result,
     rank_result,
     remove_watch,
     report_result,
+    split_command,
     overview_result,
     financial_result,
     valuation_result,
@@ -119,7 +119,17 @@ help_matcher = on_command(
 
 @help_matcher.handle()
 async def _help(bot: Bot, event: Event) -> None:
-    await _guard(bot, event, help_result())
+    try:
+        from src.plugins.nonebot_plugin_picmenu_next.__main__ import render_menu
+
+        menu, _, _ = await render_menu(bot, event, plugin_id="nonebot_plugin_sayustock")
+    except Exception:
+        logger.exception("[SayuStock] 七七股票菜单渲染失败")
+        menu = None
+    if menu is None:
+        await bot.send(event, "当前没有可显示的股票菜单。")
+        return
+    await menu.send(target=event, bot=bot)
 
 
 overview_matcher = on_command("大盘概览", aliases={"大盘", "大盘概况", "市场概览", "股票大盘"}, priority=5, block=True)
@@ -211,8 +221,8 @@ dispatcher = on_command("股票", priority=5, block=True)
 @dispatcher.handle()
 async def _dispatch(bot: Bot, event: Event, args: Any = CommandArg()) -> None:
     sub = _arg_text(args)
-    if not sub:
-        await _guard(bot, event, help_result())
+    if not sub or split_command(sub)[0] == "help":
+        await _help(bot, event)
         return
     await _guard(bot, event, execute(sub, from_event(bot, event)))
 

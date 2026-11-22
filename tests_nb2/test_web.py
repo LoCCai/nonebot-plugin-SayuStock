@@ -123,6 +123,22 @@ def test_chart_html_and_command_write_need_csrf(client):
     assert command.json()["artifacts"]
 
 
+def test_help_aliases_return_menu_url(client):
+    for alias in ("/股票", "/股票菜单", "/股票帮助"):
+        response = client.post(
+            f"{ROUTER_PREFIX}/api/command",
+            headers=headers(),
+            json={"text": alias},
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["ok"] is True
+        assert payload["text"] == "股票菜单"
+        assert payload["structured"]["menu_url"] == "/qweb/features/sayustock"
+        assert payload["image"] is None
+        assert payload["artifacts"] == []
+
+
 def test_private_artifacts_are_owner_only(client):
     forged = headers("alice")
     forged.update({"X-QWeb-User": "bob", "X-QWeb-Admin": "1", "X-QWeb-Session": "forged"})

@@ -337,6 +337,10 @@
         method: "POST",
         body: JSON.stringify({ text }),
       });
+      if (payload?.structured?.menu_url === "/qweb/features/sayustock") {
+        window.top.location.assign("/qweb/features/sayustock");
+        return payload;
+      }
       renderCommand(payload, text, target);
       if (options.scroll !== false) {
         const node = resolveOutput(target);

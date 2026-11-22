@@ -8,7 +8,6 @@ from dataclasses import field, dataclass
 
 from nonebot.log import logger
 
-from .menu import USAGE
 from .config import get_value
 from .runtime import get_runtime, artifact_url
 from .features import invoke, lookup, catalog
@@ -62,21 +61,6 @@ async def _render(html: str, width: int) -> bytes | None:
     except Exception as error:
         logger.warning("[SayuStock] 图片渲染异常: {}", error)
         return None
-
-
-async def help_result() -> CommandResult:
-    lines = [
-        "【SayuStock · NoneBot2】",
-        USAGE,
-        *(
-            "、".join(f.command for f in catalog().values() if f.category == category)
-            for category in dict.fromkeys(f.category for f in catalog().values())
-        ),
-        "",
-        "提示：默认命令前缀由 NoneBot 的 COMMAND_START 决定；也支持直接发送“大盘概览”。",
-        "支持 OneBot v11 / OneBot v12 / QQ 官方机器人。",
-    ]
-    return CommandResult("\n".join(lines))
 
 
 async def overview_result(*, owner: str = "", with_image: bool = True) -> CommandResult:
@@ -499,6 +483,8 @@ _COMMAND_ALIASES = {
 def split_command(text: str) -> tuple[str, str, str]:
     """Return ``(intent, argument, matched_alias)`` for a plain text message."""
     cleaned = text.strip().lstrip("/").strip()
+    if cleaned == "股票":
+        return "help", "", cleaned
     for intent, aliases in _COMMAND_ALIASES.items():
         for alias in sorted(aliases, key=len, reverse=True):
             if cleaned == alias:
@@ -520,7 +506,7 @@ async def execute(text: str, ue: UnifiedEvent) -> CommandResult:
     if not intent:
         return CommandResult("未识别该指令。发送“股票帮助”查看用法；网页 AI 由 QWeb 宿主提供。")
     if intent == "help":
-        return await help_result()
+        return CommandResult("股票菜单", structured={"menu_url": "/qweb/features/sayustock"})
     if intent == "overview":
         return await overview_result(owner=ue.user_id, with_image=ue.platform != "qweb")
     if intent == "stock":
@@ -573,7 +559,6 @@ __all__ = [
     "CommandResult",
     "deliver",
     "execute",
-    "help_result",
     "parse_screen",
     "split_command",
 ]
