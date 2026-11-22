@@ -8,6 +8,7 @@ only to their owner.
 
 from __future__ import annotations
 
+import asyncio
 import re
 import time
 import base64
@@ -465,11 +466,11 @@ def _build_router(host: HostDependencies, prefix: str = ROUTER_PREFIX) -> APIRou
 
     @router.get(f"{prefix}/api/artifacts")
     async def artifacts(account: WebAccount = Depends(member)) -> Any:
-        return {"ok": True, "items": list_artifacts(50, owner=account.qq)}
+        return {"ok": True, "items": await asyncio.to_thread(list_artifacts, 50, owner=account.qq)}
 
     @router.get(f"{prefix}/artifact/{{artifact_id}}.html")
     async def artifact_html(artifact_id: str, account: WebAccount = Depends(member)) -> Any:
-        found = get_artifact(artifact_id, owner=account.qq)
+        found = await asyncio.to_thread(get_artifact, artifact_id, owner=account.qq)
         if found is None or found[0].mime not in {"text/html", "text/html; charset=utf-8"}:
             return HTMLResponse("制品不存在", status_code=404)
         _, path = found
@@ -481,15 +482,15 @@ def _build_router(host: HostDependencies, prefix: str = ROUTER_PREFIX) -> APIRou
             "X-Content-Type-Options": "nosniff",
             "Content-Disposition": "inline",
         }
-        return HTMLResponse(path.read_text(encoding="utf-8"), headers=headers)
+        return HTMLResponse(await asyncio.to_thread(path.read_text, encoding="utf-8"), headers=headers)
 
     @router.get(f"{prefix}/artifact/{{artifact_id}}.png")
     async def artifact_png(artifact_id: str, account: WebAccount = Depends(member)) -> Any:
-        found = get_artifact(artifact_id, owner=account.qq)
+        found = await asyncio.to_thread(get_artifact, artifact_id, owner=account.qq)
         if found is None or not found[0].mime.startswith("image/"):
             return Response(status_code=404)
         _, path = found
-        return Response(content=path.read_bytes(), media_type="image/png")
+        return Response(content=await asyncio.to_thread(path.read_bytes), media_type="image/png")
 
     @router.get(f"{prefix}/api/qweb/tools")
     async def qweb_tools(_account: WebAccount = Depends(member)) -> Any:

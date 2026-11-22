@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
@@ -415,7 +416,7 @@ async def generate_report_tool(
 async def list_artifacts_tool(*, _tool_context: ToolContext) -> ToolOutcome:
     from ..artifacts import list_artifacts
 
-    items = list_artifacts(20, owner=_tool_context.user_id)
+    items = await asyncio.to_thread(list_artifacts, 20, owner=_tool_context.user_id)
     text = (
         "暂无制品。"
         if not items

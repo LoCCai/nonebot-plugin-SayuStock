@@ -34,8 +34,8 @@ async def call(name, arguments, *, qq, thread, is_admin, confirmed):
     for item in result.artifacts:
         if not item.mime.startswith("text/html"):
             continue
-        owned = get_artifact(item.id, owner=qq)
-        if not owned or owned[1].stat().st_size > 18000000:
+        owned = await asyncio.to_thread(get_artifact, item.id, owner=qq)
+        if not owned or (await asyncio.to_thread(owned[1].stat)).st_size > 18000000:
             raise ValueError("无法读取本次生成的图表")
         html = await asyncio.to_thread(owned[1].read_text, encoding="utf-8")
         media.append((item.title, "html", html))

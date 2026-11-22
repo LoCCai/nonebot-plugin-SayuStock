@@ -377,7 +377,9 @@ class MarketService:
             quote = await self.market.quote(spec)
         if not isinstance(quote, Quote):
             return None
-        spark = sparkline_from_series(series, width=170, height=46) if isinstance(series, IntradaySeries) else ""
+        spark = ""
+        if isinstance(series, IntradaySeries):
+            spark = await asyncio.to_thread(sparkline_from_series, series, width=170, height=46)
         return {**quote_dict(quote), "spark": spark}
 
     async def main_flow_uri(self) -> str:
