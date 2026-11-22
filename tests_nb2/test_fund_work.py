@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import date, datetime
 
 import pytest
@@ -63,6 +64,9 @@ async def test_qweb_cloudmap_skips_png_but_keeps_html(fake_market, monkeypatch) 
         assert artifact.owner == "10001" and artifact.title == title
         document = get_artifact(artifact.id, owner="10001")[1].read_text()
         assert f"<h1>{title}</h1>" in document and result.text.startswith(f"【{title}】")
+        assert 'class="cloud-plot market-map"' in document
+        tiles = re.findall(r"<rect\b[^>]+>", document)
+        assert tiles and all('stroke-width="' in tile and 'rx="' not in tile for tile in tiles)
         if label != "A股":
             assert "涨停" not in result.text
 

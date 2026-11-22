@@ -8,6 +8,9 @@
 .cloud-meta {justify-content:space-between;margin:16px 0 10px;color:var(--ss-text-soft);font-size:clamp(13px,1.3vw,19px)}
 .cloud-key i {display:inline-block;width:.75em;height:.75em;border-radius:3px;margin-right:.35em}
 .cloud-plot {display:block;width:100%;height:auto;background:var(--ss-bg);border-radius:12px;overflow:hidden}
+.cloud-plot.market-map {border-radius:0;--tile-edge:#e8e5ee}
+[data-theme="dark"] .market-map {--tile-edge:color-mix(in srgb,#e8e5ee 55%,var(--ss-surface))}
+.market-map rect {stroke:var(--tile-edge);shape-rendering:crispEdges}
 .cloud-plot text {pointer-events:none}
 .cloud-sub {margin:.7em 0 0;color:var(--ss-text-soft);font-size:clamp(14px,1.4vw,21px)}
 @media(min-width:1500px) {
@@ -29,12 +32,16 @@
 <p class="cloud-sub">{{ coverage or '市值加权' }}{% if coverage %} · 市值加权{% endif %}</p></div><!--stock-heading-art--></header>
 <div class="cloud-meta"><span>{{ source }} · 图中 {{ page.tiles|length }} 只</span>
 <span class="cloud-key">{% for tone,label in [('down','下跌'),('flat','平盘'),('up','上涨')] %}<span><i style="background:var(--ss-{{ tone }})"></i>{{ label }}</span>{% endfor %}</span></div>
-<svg class="cloud-plot" viewBox="0 0 {{ page.plot_width }} {{ page.plot_height }}" role="img" aria-label="{{ page.title }}，面积为市值，颜色为涨跌幅">
+<svg class="cloud-plot{% if page.full_bleed %} market-map{% endif %}" viewBox="0 0 {{ page.plot_width }} {{ page.plot_height }}" role="img" aria-label="{{ page.title }}，面积为市值，颜色为涨跌幅">
   {% for g in page.groups if g.show_title %}
   <text x="{{ g.x+4 }}" y="{{ g.y+g.header_h*0.76 }}" font-size="{{ g.header_font }}" font-weight="600" fill="var(--ss-text-soft)">{{ g.name }}</text>
   {% endfor %}
+  {# Inset the centred stroke by half the layout gutter so neighbouring edges meet. #}
+  {% set edge = 0.9 * page.unit if page.full_bleed else 0 %}
   {% for t in page.tiles %}
-  <g><title>{{ t.name }} {{ t.change }}</title><rect x="{{ t.x }}" y="{{ t.y }}" width="{{ t.w }}" height="{{ t.h }}" rx="{{ [t.w*0.06,t.h*0.07,5*page.unit]|min }}" fill="{{ t.color }}"/>
+  <g><title>{{ t.name }} {{ t.change }}</title>
+  <rect x="{{ t.x + edge/2 }}" y="{{ t.y + edge/2 }}" width="{{ t.w }}" height="{{ t.h }}" fill="{{ t.color }}"
+        {% if page.full_bleed %}stroke-width="{{ edge }}"{% else %}rx="{{ [t.w*0.06,t.h*0.07,5*page.unit]|min }}"{% endif %}/>
   {% if t.show_text %}<text x="{{ t.x+t.w/2 }}" y="{{ t.y+t.h/2 }}" text-anchor="middle" dominant-baseline="central" font-size="{{ t.font_size }}" fill="{{ tile_text_color(t.color) }}">
     <tspan x="{{ t.x+t.w/2 }}" dy="{{ '-.48em' if t.show_change else '0' }}" font-weight="650">{{ t.name }}</tspan>
     {% if t.show_change %}<tspan x="{{ t.x+t.w/2 }}" dy="1.3em" font-size=".84em">{{ t.change }}</tspan>{% endif %}
